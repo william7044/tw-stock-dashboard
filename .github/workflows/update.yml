@@ -1,0 +1,58 @@
+name: 更新台股資料
+
+on:
+  schedule:
+    # GitHub 的排程用 UTC；台灣時間 = UTC+8。排程常會延遲 10~60 分鐘。
+    - cron: "30 9 * * 1-5"   # 17:30 收盤行情、三大法人
+    - cron: "30 14 * * 1-5"  # 22:30 融資融券（約 21:30 公布）＋補抓
+    - cron: "0 2 * * 6"      # 週六 10:00 集保股權分散表（每週一次）
+  workflow_dispatch:
+    inputs:
+      backfill_days:
+        description: "回補最近幾個交易日（平常填 0；第一次沒有資料時填 40）"
+        required: false
+        default: "0"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: 單元測試
+        run: python -m unittest discover -s tests
+
+      - name: 抓資料並產生儀表板
+        env:
+          BACKFILL_DAYS: ${{ inputs.backfill_days || '0' }}
+        run: python run.py --backfill-days "$BACKFILL_DAYS"
+
+      - name: 提交更新
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data docs
+          if git diff --cached --quiet; then
+            echo "沒有新資料"
+            exit 0
+          fi
+          git commit -m "data: $(TZ=Asia/Taipei date '+%Y-%m-%d %H:%M') 更新"
+          git push
+
+      - name: 連線檢查（只在手動執行時）
+        if: github.event_name == 'workflow_dispatch'
+        continue-on-error: true
+        shell: bash
+        run: python -m stock_agent.check | tee -a "$GITHUB_STEP_SUMMARY"

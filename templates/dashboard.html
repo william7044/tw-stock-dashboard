@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>台股籌碼儀表板</title>
+<meta name="description" content="用證交所、櫃買中心、公開資訊觀測站與集保的免費公開資料整理的台股籌碼儀表板">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --surface-2: #f1f0ec;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --accent-wash: rgba(42, 120, 214, 0.10);
+  --up: #d9443f;
+  --down: #1d8a5a;
+  --up-text: #c0362f;
+  --down-text: #16794c;
+  --warn-bg: #fdf3dc;
+  --warn-ink: #6b4500;
+  --shadow: 0 1px 2px rgba(11, 11, 11, 0.06), 0 8px 24px rgba(11, 11, 11, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #242422;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+    --accent-wash: rgba(57, 135, 229, 0.14);
+    --up: #e66767;
+    --down: #008300;
+    --up-text: #f08a84;
+    --down-text: #2fbf5f;
+    --warn-bg: #33270d;
+    --warn-ink: #f2c46b;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --surface-2: #242422;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5;
+  --accent-wash: rgba(57, 135, 229, 0.14);
+  --up: #e66767;
+  --down: #008300;
+  --up-text: #f08a84;
+  --down-text: #2fbf5f;
+  --warn-bg: #33270d;
+  --warn-ink: #f2c46b;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--ink);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+.wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+a { color: var(--accent); }
+button, select, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+h1 { font-size: 22px; line-height: 1.25; margin: 0; font-weight: 650; letter-spacing: 0.01em; }
+.sub { color: var(--ink-2); margin: 2px 0 0; }
+.theme-btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.theme-btn:hover { background: var(--surface-2); }
+
+.status { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 16px; padding: 0; list-style: none; }
+.status li { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; color: var(--ink-2); font-size: 12.5px; }
+.status li b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.status li.stale { border-color: color-mix(in srgb, var(--warn-ink) 40%, transparent); background: var(--warn-bg); color: var(--warn-ink); }
+details.warnings { background: var(--warn-bg); color: var(--warn-ink); border-radius: 10px; padding: 8px 12px; margin: -8px 0 16px; font-size: 13px; }
+details.warnings summary { cursor: pointer; font-weight: 600; }
+details.warnings ul { margin: 6px 0 0; padding-left: 18px; word-break: break-all; }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 10px; min-width: 0; }
+.tile .label { color: var(--ink-2); font-size: 13px; margin: 0; }
+.tile .value { font-size: 26px; font-weight: 620; margin: 2px 0 0; line-height: 1.2; }
+.tile .delta { font-size: 13px; margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.tile .split { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12.5px; color: var(--ink-2); margin: 2px 0 6px; font-variant-numeric: tabular-nums; }
+.tile .note { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+
+.up { color: var(--up-text); }
+.down { color: var(--down-text); }
+.flat { color: var(--ink-2); }
+
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart:focus-visible { outline-offset: 4px; border-radius: 6px; }
+.chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .endlabel { fill: var(--ink); font-size: 12px; font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; font-variant-numeric: tabular-nums; }
+.tip { position: absolute; z-index: 5; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 6px 9px; font-size: 12px; white-space: nowrap; line-height: 1.4; }
+.tip .v { font-weight: 650; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tip .k { color: var(--ink-2); }
+.tip .key { display: inline-block; width: 10px; height: 2px; vertical-align: middle; margin-right: 5px; border-radius: 1px; }
+
+section.screen { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 0 6px; margin-bottom: 20px; }
+section.screen > .pad { padding: 0 16px; }
+h2 { font-size: 16px; margin: 0 0 10px; font-weight: 650; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.preset { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 4px 11px; cursor: pointer; white-space: nowrap; }
+.preset:hover { background: var(--surface-2); }
+.preset[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.preset .n { font-size: 11.5px; margin-left: 4px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.preset-desc { color: var(--ink-2); margin: 2px 0 10px; font-size: 13px; min-height: 20px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.filters input[type="search"] { flex: 1 1 200px; min-width: 0; max-width: 320px; }
+.filters input, .filters select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; }
+.filters label { color: var(--ink-2); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.filters .count { color: var(--muted); font-size: 12.5px; margin-left: auto; }
+.btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+.btn:hover { background: var(--surface-2); }
+
+.table-scroll { overflow-x: auto; border-top: 1px solid var(--grid); }
+section.screen .table-scroll { max-height: 72vh; overflow: auto; }
+table { border-collapse: separate; border-spacing: 0; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+th { position: sticky; top: 0; background: var(--surface); color: var(--ink-2); font-weight: 600; font-size: 12.5px; z-index: 1; }
+th button { all: unset; cursor: pointer; display: inline-flex; gap: 3px; align-items: center; }
+th button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+th[aria-sort] { color: var(--ink); }
+th .arrow { font-size: 10px; opacity: 0.8; }
+td.sorted { background: var(--accent-wash); }
+.stick { position: sticky; left: 0; text-align: left; background: var(--surface); z-index: 2; }
+th.stick { z-index: 3; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--surface-2); }
+tbody tr:hover td.sorted { background: color-mix(in srgb, var(--accent-wash) 60%, var(--surface-2)); }
+td.name .code { font-weight: 600; margin-right: 6px; }
+td.name .mk { color: var(--muted); font-size: 11.5px; margin-left: 4px; }
+td.na { color: var(--muted); }
+.more { display: flex; justify-content: center; padding: 10px; }
+.empty { padding: 24px 16px; color: var(--ink-2); text-align: center; }
+
+section.insider { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 0 6px; margin-bottom: 20px; }
+section.insider > .pad { padding: 0 16px; }
+section.insider .hint { color: var(--ink-2); font-size: 13px; margin: -4px 0 10px; }
+section.insider td, section.insider th { text-align: left; }
+section.insider td.num, section.insider th.num { text-align: right; }
+
+footer { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+footer p { margin: 0 0 6px; }
+
+dialog { border: 1px solid var(--border); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(980px, calc(100vw - 32px)); max-height: calc(100vh - 32px); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dlg-head { position: sticky; top: 0; background: var(--surface); display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 16px 18px 10px; border-bottom: 1px solid var(--grid); z-index: 4; }
+.dlg-head h3 { margin: 0; font-size: 19px; font-weight: 650; }
+.dlg-head .meta { color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+.dlg-head .px { font-size: 22px; font-weight: 620; margin-top: 4px; }
+.dlg-head .px span { font-size: 14px; margin-left: 8px; font-variant-numeric: tabular-nums; }
+.dlg-close { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 18px; line-height: 1; }
+.dlg-body { padding: 14px 18px 18px; }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin: 0 0 14px; }
+.kv div { background: var(--surface-2); border-radius: 8px; padding: 7px 10px; min-width: 0; }
+.kv dt { color: var(--ink-2); font-size: 12px; }
+.kv dd { margin: 1px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.revnote { color: var(--ink-2); font-size: 13px; margin: -6px 0 14px; }
+.charts { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 760px) { .charts { grid-template-columns: 1fr 1fr; } .charts .wide { grid-column: 1 / -1; } }
+.chart-card h4 { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; }
+.chart-card .cap { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
+.dlg-body details { margin-top: 14px; }
+.dlg-body details summary { cursor: pointer; color: var(--ink-2); }
+.dlg-body table { margin-top: 6px; }
+.links { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+
+@media (max-width: 640px) {
+  h1 { font-size: 19px; }
+  .tile .value { font-size: 23px; }
+  dialog { width: 100vw; max-width: 100vw; max-height: 100vh; height: 100vh; border-radius: 0; margin: 0; }
+  .filters .count { margin-left: 0; width: 100%; }
+}
+@media (forced-colors: active) {
+  .preset[aria-pressed="true"] { outline: 2px solid CanvasText; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>台股籌碼儀表板</h1>
+      <p class="sub" id="subtitle"></p>
+    </div>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="切換深淺色">配色：自動</button>
+  </header>
+  <ul class="status" id="status" aria-label="各資料集的資料日期"></ul>
+  <div id="warnings"></div>
+
+  <section class="tiles" id="tiles" aria-label="大盤概況"></section>
+
+  <section class="screen" aria-labelledby="screenTitle">
+    <div class="pad">
+      <h2 id="screenTitle">選股清單</h2>
+      <div class="presets" id="presets" role="group" aria-label="快速篩選"></div>
+      <p class="preset-desc" id="presetDesc"></p>
+      <div class="filters">
+        <input type="search" id="q" placeholder="搜尋代號或名稱" aria-label="搜尋代號或名稱">
+        <label>市場 <select id="market"><option value="">全部</option><option>上市</option><option>上櫃</option></select></label>
+        <label>產業 <select id="industry"><option value="">全部</option></select></label>
+        <label>5日均量 <select id="minVol">
+          <option value="0">不限</option><option value="100">≥ 100 張</option><option value="300">≥ 300 張</option>
+          <option value="1000">≥ 1,000 張</option><option value="3000">≥ 3,000 張</option></select></label>
+        <button class="btn" type="button" id="reset">重設</button>
+        <span class="count" id="count" aria-live="polite"></span>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table id="table">
+        <thead><tr id="thead"></tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+    <div class="more" id="more" hidden><button class="btn" type="button" id="moreBtn">顯示更多</button></div>
+  </section>
+
+  <section class="insider" aria-labelledby="insTitle">
+    <div class="pad">
+      <h2 id="insTitle">內部人持股轉讓申報（近 30 天）</h2>
+      <p class="hint">董監事、經理人、大股東轉讓持股前要先申報。「一般交易」「鉅額」是在市場賣出；「贈與」「信託」通常不是。</p>
+    </div>
+    <div class="table-scroll"><table><thead><tr>
+      <th scope="col">申報日</th><th scope="col">公司</th><th scope="col">身分</th><th scope="col">轉讓方式</th>
+      <th scope="col" class="num">轉讓張數</th><th scope="col" class="num">佔其持股</th><th scope="col">有效期間</th>
+    </tr></thead><tbody id="insBody"></tbody></table></div>
+  </section>
+
+  <footer>
+    <p>資料來源：臺灣證券交易所、證券櫃檯買賣中心（OpenAPI 與網站公開資料）、公開資訊觀測站（經由兩者的 OpenAPI）、臺灣集中保管結算所開放資料。依「政府資料開放授權條款」使用。</p>
+    <p>單位：成交量、法人買賣超、融資券為「張」（1 張 = 1,000 股）；金額為新台幣「億元」。漲／買超為紅色，跌／賣超為綠色，並一律標示正負號。</p>
+    <p>本頁僅整理公開資料，不是投資建議。資料可能延遲或有誤，請以官方公告為準。</p>
+  </footer>
+</div>
+
+<dialog id="detail" aria-labelledby="dlgTitle">
+  <div class="dlg-head">
+    <div>
+      <h3 id="dlgTitle"></h3>
+      <div class="meta" id="dlgMeta"></div>
+      <div class="px" id="dlgPx"></div>
+    </div>
+    <button class="dlg-close" type="button" id="dlgClose" aria-label="關閉">×</button>
+  </div>
+  <div class="dlg-body" id="dlgBody"></div>
+</dialog>
+
+<script id="payload" type="application/json">__PAYLOAD__</script>
+<script>
+"use strict";
+const DATA = JSON.parse(document.getElementById("payload").textContent);
+const COLS = DATA.columns;
+const ROWS = DATA.rows.map(a => Object.fromEntries(COLS.map((c, i) => [c, a[i]])));
+const BY_CODE = Object.fromEntries(ROWS.map(r => [r.code, r]));
+const MINUS = "−";
+
+// ---------- formatting ----------
+const nf = (d) => new Intl.NumberFormat("zh-TW", { minimumFractionDigits: d, maximumFractionDigits: d });
+const NF0 = nf(0), NF1 = nf(1), NF2 = nf(2);
+const isNum = (v) => typeof v === "number" && isFinite(v);
+function fmtNum(v, d = 0) { return isNum(v) ? (d === 0 ? NF0 : d === 1 ? NF1 : NF2).format(v) : "—"; }
+function fmtSigned(v, d = 0, suffix = "") {
+  if (!isNum(v)) return "—";
+  const s = fmtNum(Math.abs(v), d);
+  return (v > 0 ? "+" : v < 0 ? MINUS : "") + s + suffix;
+}
+function fmtPrice(v) {
+  if (!isNum(v)) return "—";
+  return new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(v);
+}
+function fmtStreak(v) {
+  if (!isNum(v) || v === 0) return "—";
+  return (v > 0 ? "連買 " : "連賣 ") + Math.abs(v);
+}
+function dirClass(v) { return !isNum(v) || v === 0 ? "flat" : v > 0 ? "up" : "down"; }
+function md(iso) { return iso ? iso.slice(5).replace("-", "/") : "—"; }
+const WEEK = "日一二三四五六";
+function withWeekday(iso) { return iso ? `${iso}（週${WEEK[new Date(iso + "T00:00:00").getDay()]}）` : "—"; }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") e.className = v;
+    else if (k === "text") e.textContent = v;
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids) if (kid !== null && kid !== undefined) e.append(kid);
+  return e;
+}
+
+// ---------- theme ----------
+const THEMES = ["auto", "light", "dark"], THEME_LABEL = { auto: "自動", light: "淺色", dark: "深色" };
+let theme = "auto";
+try { theme = localStorage.getItem("tw-dash-theme") || "auto"; } catch (e) { /* storage unavailable */ }
+function applyTheme() {
+  if (theme === "auto") delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = theme;
+  document.getElementById("themeBtn").textContent = "配色：" + THEME_LABEL[theme];
+}
+document.getElementById("themeBtn").addEventListener("click", () => {
+  theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+  try { localStorage.setItem("tw-dash-theme", theme); } catch (e) { /* ignore */ }
+  applyTheme();
+  redrawAll();
+});
+applyTheme();
+
+// ---------- charts (inline SVG, no dependencies) ----------
+const SVGNS = "http://www.w3.org/2000/svg";
+function svgEl(tag, attrs = {}) {
+  const e = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  return e;
+}
+function niceStep(span, count) {
+  const raw = span / Math.max(1, count);
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * mag;
+}
+function compact(v) {
+  const a = Math.abs(v);
+  const s = a >= 1e8 ? (a / 1e8).toFixed(1).replace(/\.0$/, "") + "億"
+    : a >= 1e4 ? (a / 1e4).toFixed(a >= 1e5 ? 0 : 1).replace(/\.0$/, "") + "萬"
+    : new Intl.NumberFormat("zh-TW", { maximumFractionDigits: 2 }).format(a);
+  return (v < 0 ? MINUS : "") + s;
+}
+const CHARTS = new Set();
+function redrawAll() { for (const c of CHARTS) if (c.host.isConnected) c.draw(); else CHARTS.delete(c); }
+let resizeTimer = null;
+window.addEventListener("resize", () => { cancelAnimationFrame(resizeTimer); resizeTimer = requestAnimationFrame(redrawAll); });
+try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", redrawAll); } catch (e) { /* old browsers */ }
+
+/**
+ * cfg: { kind: "line"|"bar", dates, values, fmt, name, height, spark, color }
+ * Line = one series in --accent (or --muted for sparklines). Bars = signed values,
+ * red above / green below the zero baseline (Taiwan convention), sign also in text.
+ */
+function makeChart(host, cfg) {
+  const chart = { host, cfg, index: null };
+  host.classList.add("chart");
+  host.tabIndex = 0;
+  host.setAttribute("role", "img");
+  host.setAttribute("aria-label", cfg.aria || cfg.name);
+  const tip = el("div", { class: "tip", hidden: true });
+
+  chart.draw = function () {
+    const { kind, dates, values, spark } = cfg;
+    const css = getComputedStyle(document.documentElement);
+    const color = (name) => css.getPropertyValue(name).trim();
+    host.replaceChildren();
+    const W = Math.max(160, host.clientWidth || 300);
+    const H = cfg.height || (spark ? 44 : 150);
+    const padL = spark ? 0 : 46, padR = spark ? 6 : 10, padT = spark ? 6 : 10, padB = spark ? 4 : 22;
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, "aria-hidden": "true" });
+    host.append(svg, tip);
+    const present = values.filter(isNum);
+    if (!present.length) {
+      const t = svgEl("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "tick" });
+      t.textContent = "尚無資料";
+      svg.append(t);
+      return;
+    }
+    let lo = Math.min(...present), hi = Math.max(...present);
+    if (kind === "bar") { lo = Math.min(0, lo); hi = Math.max(0, hi); }
+    if (lo === hi) { lo -= 1; hi += 1; }
+    let ticks = [];
+    if (!spark) {
+      const step = niceStep(hi - lo, 3);
+      const t0 = Math.floor(lo / step) * step, t1 = Math.ceil(hi / step) * step;
+      for (let t = t0; t <= t1 + step / 2; t += step) ticks.push(Math.round(t / step) * step);
+      lo = Math.min(lo, t0); hi = Math.max(hi, t1);
+    } else if (kind === "line") {
+      const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    }
+    const n = values.length;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const band = plotW / n;
+    const x = (i) => padL + band * (i + 0.5);
+    const y = (v) => padT + (hi - v) / (hi - lo) * plotH;
+
+    for (const t of ticks) {
+      svg.append(svgEl("line", { x1: padL, x2: W - padR, y1: y(t), y2: y(t), stroke: t === 0 && kind === "bar" ? color("--axis") : color("--grid"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+      const lab = svgEl("text", { x: padL - 6, y: y(t) + 3.5, "text-anchor": "end", class: "tick" });
+      lab.textContent = compact(t);
+      svg.append(lab);
+    }
+    if (!spark) {
+      const picks = [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i);
+      for (const i of picks) {
+        const lab = svgEl("text", { x: x(i), y: H - 5, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "tick" });
+        if (i === 0) lab.setAttribute("x", padL);
+        if (i === n - 1) lab.setAttribute("x", W - padR);
+        lab.textContent = md(dates[i]);
+        svg.append(lab);
+      }
+    }
+    const marks = [];
+    if (kind === "line") {
+      const lineColor = spark ? color("--muted") : (cfg.color ? color(cfg.color) : color("--accent"));
+      let d = "", area = "", runStart = null;
+      values.forEach((v, i) => {
+        if (!isNum(v)) { if (runStart !== null) { area += `L${x(i - 1)},${padT + plotH}Z`; runStart = null; } return; }
+        if (runStart === null) { d += `M${x(i)},${y(v)}`; area += `M${x(i)},${padT + plotH}L${x(i)},${y(v)}`; runStart = i; }
+        else { d += `L${x(i)},${y(v)}`; area += `L${x(i)},${y(v)}`; }
+      });
+      if (runStart !== null) area += `L${x(n - 1)},${padT + plotH}Z`;
+      if (!spark) svg.append(svgEl("path", { d: area, fill: color("--accent"), "fill-opacity": 0.10, stroke: "none" }));
+      svg.append(svgEl("path", { d, fill: "none", stroke: lineColor, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+      let last = n - 1; while (last >= 0 && !isNum(values[last])) last--;
+      if (last >= 0) {
+        svg.append(svgEl("circle", { cx: x(last), cy: y(values[last]), r: 4, fill: color("--accent"), stroke: color("--surface"), "stroke-width": 2 }));
+        if (!spark) {
+          const lab = svgEl("text", { x: x(last) - 8, y: y(values[last]) - 9, "text-anchor": "end", class: "endlabel" });
+          lab.textContent = cfg.fmt(values[last]);
+          svg.append(lab);
+        }
+      }
+      chart.cross = svgEl("line", { y1: padT, y2: padT + plotH, stroke: color("--axis"), "stroke-width": 1, visibility: "hidden" });
+      chart.dot = svgEl("circle", { r: 4, fill: lineColor, stroke: color("--surface"), "stroke-width": 2, visibility: "hidden" });
+      svg.append(chart.cross, chart.dot);
+    } else {
+      const bw = Math.max(2, Math.min(24, band - 2, band * 0.7));
+      const y0 = y(0);
+      values.forEach((v, i) => {
+        if (!isNum(v) || v === 0) { marks.push(null); return; }
+        const top = y(Math.max(v, 0)), bottom = y(Math.min(v, 0));
+        const h = Math.max(1, bottom - top), r = Math.min(4, h / 2, bw / 2), x0 = x(i) - bw / 2;
+        // rounded data-end, square at the baseline
+        const p = v > 0
+          ? `M${x0},${y0}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + bw - r}Q${x0 + bw},${top} ${x0 + bw},${top + r}V${y0}Z`
+          : `M${x0},${y0}V${bottom - r}Q${x0},${bottom} ${x0 + r},${bottom}H${x0 + bw - r}Q${x0 + bw},${bottom} ${x0 + bw},${bottom - r}V${y0}Z`;
+        const bar = svgEl("path", { d: p, fill: v > 0 ? color("--up") : color("--down") });
+        svg.append(bar);
+        marks.push(bar);
+      });
+      if (spark) svg.append(svgEl("line", { x1: 0, x2: W, y1: y0, y2: y0, stroke: color("--axis"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+    }
+    const hit = svgEl("rect", { x: padL, y: 0, width: plotW, height: H, fill: "transparent" });
+    svg.append(hit);
+    const show = (i) => {
+      if (i === null || i < 0 || i >= n) return;
+      chart.index = i;
+      const v = values[i];
+      if (kind === "line") {
+        chart.cross.setAttribute("x1", x(i)); chart.cross.setAttribute("x2", x(i));
+        chart.cross.setAttribute("visibility", "visible");
+        if (isNum(v)) { chart.dot.setAttribute("cx", x(i)); chart.dot.setAttribute("cy", y(v)); chart.dot.setAttribute("visibility", "visible"); }
+        else chart.dot.setAttribute("visibility", "hidden");
+      } else {
+        marks.forEach((m, k) => { if (m) m.setAttribute("fill-opacity", k === i ? 1 : 0.4); });
+      }
+      const keyColor = kind === "line" ? (spark ? color("--muted") : color("--accent")) : (isNum(v) && v < 0 ? color("--down") : color("--up"));
+      tip.replaceChildren(
+        el("div", { class: "v" }, el("span", { class: "key", style: `background:${keyColor}` }), cfg.fmt(v)),
+        el("div", { class: "k", text: `${cfg.name}・${dates[i] || ""}` }),
+      );
+      tip.hidden = false;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = x(i) + 10;
+      if (left + tw > W) left = x(i) - tw - 10;
+      tip.style.left = Math.max(0, left) + "px";
+      tip.style.top = Math.max(-th - 4, (isNum(v) ? y(v) : padT) - th - 8) + "px";
+    };
+    const hide = () => {
+      chart.index = null; tip.hidden = true;
+      if (kind === "line") { chart.cross.setAttribute("visibility", "hidden"); chart.dot.setAttribute("visibility", "hidden"); }
+      else marks.forEach((m) => m && m.setAttribute("fill-opacity", 1));
+    };
+    const indexAt = (evt) => {
+      const r = svg.getBoundingClientRect();
+      const px = (evt.clientX - r.left) * (W / r.width);
+      return Math.max(0, Math.min(n - 1, Math.floor((px - padL) / band)));
+    };
+    hit.addEventListener("pointermove", (e) => show(indexAt(e)));
+    hit.addEventListener("pointerleave", hide);
+    host.onfocus = () => show(chart.index ?? n - 1);
+    host.onblur = hide;
+    host.onkeydown = (e) => {
+      const keys = { ArrowLeft: -1, ArrowRight: 1 };
+      if (e.key in keys) { e.preventDefault(); show(Math.max(0, Math.min(n - 1, (chart.index ?? n - 1) + keys[e.key]))); }
+      else if (e.key === "Home") { e.preventDefault(); show(0); }
+      else if (e.key === "End") { e.preventDefault(); show(n - 1); }
+      else if (e.key === "Escape") hide();
+    };
+  };
+  CHARTS.add(chart);
+  chart.draw();
+  return chart;
+}
+
+// ---------- header & status ----------
+document.getElementById("subtitle").textContent =
+  `資料日期 ${withWeekday(DATA.data_date)}・更新於 ${(DATA.updated_at || "").replace("T", " ").slice(0, 16) || "—"}（台灣時間）`;
+(function renderStatus() {
+  const s = DATA.status, ul = document.getElementById("status");
+  const items = [
+    ["行情", s.quotes, s.quotes !== DATA.data_date],
+    ["三大法人", s.insti, s.insti !== DATA.data_date],
+    ["融資券", s.margin, s.margin !== DATA.data_date],
+    ["本益比", s.valuation, false],
+    ["月營收", s.revenue, false],
+    ["集保大戶", s.tdcc ? s.tdcc + (s.tdcc_prev ? "" : "（首週，下週起才有週變化）") : null, false],
+  ];
+  for (const [label, value, stale] of items) {
+    ul.append(el("li", { class: stale ? "stale" : null, title: stale ? "比資料日期舊，可能還沒公布或抓取失敗" : null }, label + " ", el("b", { text: value || "—" })));
+  }
+  if (DATA.warnings && DATA.warnings.length) {
+    const box = el("details", { class: "warnings" }, el("summary", { text: `最近一次更新有 ${DATA.warnings.length} 則警告` }));
+    const list = el("ul");
+    for (const w of DATA.warnings) list.append(el("li", { text: w }));
+    box.append(list);
+    document.getElementById("warnings").append(box);
+  }
+})();
+
+// ---------- overview tiles ----------
+(function renderTiles() {
+  const m = DATA.market, root = document.getElementById("tiles");
+  const lastIdx = (arr) => { for (let i = arr.length - 1; i >= 0; i--) if (arr[i]) return i; return -1; };
+
+  function indexTile(label, arr) {
+    const i = lastIdx(arr);
+    const tile = el("div", { class: "tile" }, el("p", { class: "label", text: label }));
+    root.append(tile);
+    if (i < 0) { tile.append(el("p", { class: "value", text: "—" }), el("p", { class: "note", text: "尚無資料" })); return; }
+    const [close, chg] = arr[i];
+    const pct = isNum(chg) && close - chg ? chg / (close - chg) * 100 : null;
+    tile.append(
+      el("p", { class: "value", text: fmtNum(close, 2) }),
+      el("p", { class: "delta " + dirClass(chg), text: `${fmtSigned(chg, 2)}（${fmtSigned(pct, 2, "%")}）・${md(m.dates[i])}` }),
+    );
+    const host = el("div");
+    tile.append(host);
+    makeChart(host, { kind: "line", spark: true, height: 46, dates: m.dates, values: arr.map(v => v ? v[0] : null), fmt: v => fmtNum(v, 2), name: label, aria: `${label}近 ${m.dates.length} 日走勢` });
+  }
+  function instiTile() {
+    const tw = m.insti_twse, i = lastIdx(tw);
+    const tile = el("div", { class: "tile" }, el("p", { class: "label", text: "上市三大法人買賣超" }));
+    root.append(tile);
+    if (i < 0) { tile.append(el("p", { class: "value", text: "—" })); return; }
+    const v = tw[i];
+    tile.append(
+      el("p", { class: "value " + dirClass(v.total), text: fmtSigned(v.total, 1, " 億") }),
+      el("p", { class: "split" },
+        el("span", {}, "外資 ", el("b", { class: dirClass(v.foreign), text: fmtSigned(v.foreign, 1) })),
+        el("span", {}, "投信 ", el("b", { class: dirClass(v.trust), text: fmtSigned(v.trust, 1) })),
+        el("span", {}, "自營 ", el("b", { class: dirClass(v.dealer), text: fmtSigned(v.dealer, 1) })),
+        el("span", { text: md(m.dates[i]) })),
+    );
+    const host = el("div");
+    tile.append(host);
+    makeChart(host, { kind: "bar", spark: true, height: 46, dates: m.dates, values: tw.map(x => x ? x.total : null), fmt: v => fmtSigned(v, 1, " 億"), name: "上市三大法人合計", aria: "上市三大法人每日買賣超金額" });
+    const tp = m.insti_tpex, j = lastIdx(tp);
+    if (j >= 0) tile.append(el("p", { class: "note" }, `上櫃三大法人 `, el("b", { class: dirClass(tp[j].total), text: fmtSigned(tp[j].total, 1, " 億") }), `（${md(m.dates[j])}）`));
+  }
+  function marginTile() {
+    const arr = m.margin_amount, i = lastIdx(arr);
+    const tile = el("div", { class: "tile" }, el("p", { class: "label", text: "上市融資餘額" }));
+    root.append(tile);
+    if (i < 0) { tile.append(el("p", { class: "value", text: "—" })); return; }
+    const [amount, chg] = arr[i];
+    tile.append(
+      el("p", { class: "value", text: fmtNum(amount, 0) + " 億" }),
+      el("p", { class: "delta " + dirClass(chg), text: `${fmtSigned(chg, 1, " 億")}・${md(m.dates[i])}` }),
+    );
+    const host = el("div");
+    tile.append(host);
+    makeChart(host, { kind: "line", spark: true, height: 46, dates: m.dates, values: arr.map(v => v ? v[0] : null), fmt: v => fmtNum(v, 1) + " 億", name: "上市融資餘額", aria: "上市融資餘額走勢" });
+  }
+  indexTile("加權指數", m.taiex);
+  indexTile("櫃買指數", m.otc);
+  instiTile();
+  marginTile();
+})();
+
+// ---------- screener ----------
+const ge = (v, t) => isNum(v) && v >= t;
+const PRESETS = [
+  { id: "all", label: "全部", desc: "所有上市櫃普通股（不含 ETF），預設依成交值排序。點任一列看個股細節。", f: () => true, sort: ["value", -1] },
+  { id: "foreign", label: "外資連買", desc: "外資連續買超 ≥ 5 天、近 5 日均量 ≥ 500 張；依 5 日買超張數排序。", f: r => ge(r.fs, 5) && ge(r.vol5, 500), sort: ["f5", -1], extra: ["f5vol"] },
+  { id: "trust", label: "投信連買", desc: "投信連續買超 ≥ 3 天、近 5 日均量 ≥ 300 張；依 5 日買超張數排序。", f: r => ge(r.ts, 3) && ge(r.vol5, 300), sort: ["t5", -1], extra: ["t5cap"] },
+  { id: "trustcap", label: "投信認養", desc: "投信近 5 日買超佔股本 ≥ 0.5%（中小型股常見）；依佔比排序。", f: r => ge(r.t5cap, 0.5), sort: ["t5cap", -1], extra: ["t5cap"] },
+  { id: "revenue", label: "營收高成長", desc: "最新月營收年增 ≥ 50%、今年累計年增 ≥ 30%、單月營收 ≥ 1 億；依年增率排序。", f: r => ge(r.rev_yoy, 50) && ge(r.rev_cum_yoy, 30) && ge(r.rev, 1), sort: ["rev_yoy", -1], extra: ["rev_cum_yoy"] },
+  { id: "big", label: "大戶加碼", desc: "千張大戶持股比例比上週增加 ≥ 0.5 個百分點，且股東人數減少（籌碼集中）。", f: r => ge(r.big_chg, 0.5) && isNum(r.holders_chg) && r.holders_chg < 0, sort: ["big_chg", -1], extra: ["holders_chg"], needs: "tdcc_prev", needsMsg: "集保資料每週一次，要累積兩週才算得出週變化。下週更新後就會出現。" },
+  { id: "margin", label: "融資大增", desc: "近 5 日融資餘額增加 ≥ 10%（餘額 ≥ 500 張）。散戶追價、槓桿升高，波動風險較大。", f: r => ge(r.m_chg5_pct, 10) && ge(r.m_bal, 500), sort: ["m_chg5_pct", -1], extra: ["m_chg5_pct", "s_ratio"] },
+  { id: "yield", label: "高殖利率", desc: "殖利率 ≥ 6%、本益比 0～12 倍；依殖利率排序。殖利率以最近一年股利計算。", f: r => ge(r.yld, 6) && isNum(r.pe) && r.pe > 0 && r.pe <= 12, sort: ["yld", -1], extra: ["pb"] },
+  { id: "insider", label: "內部人申報", desc: "近 30 天有內部人申報轉讓持股（不一定是在市場賣出，詳見下方申報清單）。", f: r => r.ins_n > 0, sort: ["ins_lots", -1], extra: ["ins_lots"] },
+];
+const COLDEFS = {
+  close: { label: "收盤", fmt: fmtPrice },
+  chg_pct: { label: "漲跌%", fmt: v => fmtSigned(v, 2), dir: true },
+  ret5: { label: "5日%", fmt: v => fmtSigned(v, 1), dir: true, title: "近 5 個交易日漲跌幅" },
+  vol: { label: "成交量", fmt: v => fmtNum(v), title: "今日成交量（張）" },
+  value: { label: "成交值(億)", fmt: v => isNum(v) ? fmtNum(v / 100, 1) : "—", title: "今日成交金額（億元）" },
+  f1: { label: "外資", fmt: v => fmtSigned(v), dir: true, title: "外資今日買賣超（張，不含外資自營商）" },
+  f5: { label: "外資5日", fmt: v => fmtSigned(v), dir: true, title: "外資近 5 日買賣超（張）" },
+  fs: { label: "外資連續", fmt: fmtStreak, dir: true, title: "外資連續買超／賣超天數" },
+  f5vol: { label: "外資5日/量%", fmt: v => fmtSigned(v, 1), dir: true, title: "外資 5 日買超佔 5 日成交量比例" },
+  t1: { label: "投信", fmt: v => fmtSigned(v), dir: true, title: "投信今日買賣超（張）" },
+  t5: { label: "投信5日", fmt: v => fmtSigned(v), dir: true, title: "投信近 5 日買賣超（張）" },
+  ts: { label: "投信連續", fmt: fmtStreak, dir: true, title: "投信連續買超／賣超天數" },
+  t5cap: { label: "投信5日/股本%", fmt: v => fmtSigned(v, 2), dir: true, title: "投信 5 日買超佔已發行股數比例" },
+  m_chg: { label: "融資增減", fmt: v => fmtSigned(v), dir: true, title: "今日融資餘額增減（張）" },
+  m_chg5_pct: { label: "融資5日%", fmt: v => fmtSigned(v, 1), dir: true, title: "近 5 日融資餘額變化" },
+  s_ratio: { label: "券資比%", fmt: v => fmtNum(v, 1), title: "融券餘額 ÷ 融資餘額" },
+  rev_yoy: { label: "營收年增%", fmt: v => fmtSigned(v, 1), dir: true, title: "最新月營收年增率" },
+  rev_cum_yoy: { label: "累計年增%", fmt: v => fmtSigned(v, 1), dir: true, title: "今年累計營收年增率" },
+  pe: { label: "本益比", fmt: v => fmtNum(v, 1) },
+  yld: { label: "殖利率%", fmt: v => fmtNum(v, 2) },
+  pb: { label: "淨值比", fmt: v => fmtNum(v, 2) },
+  big: { label: "千張大戶%", fmt: v => fmtNum(v, 1), title: "持股 1,000 張以上股東合計持股比例（集保，每週）" },
+  big_chg: { label: "大戶週增減", fmt: v => fmtSigned(v, 2), dir: true, title: "千張大戶持股比例與上週相比（百分點）" },
+  holders_chg: { label: "股東人數週%", fmt: v => fmtSigned(v, 2), dir: true, title: "集保股東人數週變化" },
+  ins_lots: { label: "申報轉讓張數", fmt: v => fmtNum(v), title: "近 30 天內部人申報轉讓合計（張）" },
+};
+const BASE_COLS = ["close", "chg_pct", "ret5", "vol", "f1", "f5", "fs", "t1", "t5", "ts", "m_chg", "rev_yoy", "pe", "yld", "big", "big_chg"];
+
+const state = { preset: "all", q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 };
+try {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (PRESETS.some(p => p.id === h.get("p"))) state.preset = h.get("p");
+} catch (e) { /* ignore */ }
+const preset = () => PRESETS.find(p => p.id === state.preset);
+
+(function initFilters() {
+  const ind = document.getElementById("industry");
+  [...new Set(ROWS.map(r => r.industry))].sort((a, b) => a.localeCompare(b, "zh-Hant")).forEach(v => ind.append(el("option", { value: v, text: v })));
+  document.getElementById("q").addEventListener("input", (e) => { state.q = e.target.value.trim(); state.limit = 100; renderTable(); });
+  document.getElementById("market").addEventListener("change", (e) => { state.market = e.target.value; state.limit = 100; renderAll(); });
+  ind.addEventListener("change", (e) => { state.industry = e.target.value; state.limit = 100; renderAll(); });
+  document.getElementById("minVol").addEventListener("change", (e) => { state.minVol = +e.target.value; state.limit = 100; renderAll(); });
+  document.getElementById("reset").addEventListener("click", () => {
+    Object.assign(state, { q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 });
+    for (const id of ["q", "market", "industry"]) document.getElementById(id).value = "";
+    document.getElementById("minVol").value = "0";
+    renderAll();
+  });
+  document.getElementById("moreBtn").addEventListener("click", () => { state.limit += 200; renderTable(); });
+})();
+
+function baseFilter(r) {
+  if (state.market && r.market !== state.market) return false;
+  if (state.industry && r.industry !== state.industry) return false;
+  if (state.minVol && !(isNum(r.vol5) && r.vol5 >= state.minVol)) return false;
+  return true;
+}
+function searchFilter(r) {
+  if (!state.q) return true;
+  const q = state.q.toLowerCase();
+  return r.code.includes(q) || (r.name || "").toLowerCase().includes(q);
+}
+
+function renderPresets() {
+  const box = document.getElementById("presets");
+  box.replaceChildren();
+  const base = ROWS.filter(baseFilter);
+  for (const p of PRESETS) {
+    const disabled = p.needs && !DATA.status[p.needs];
+    const n = disabled ? null : base.filter(p.f).length;
+    box.append(el("button", {
+      class: "preset", type: "button", "aria-pressed": String(p.id === state.preset),
+      onclick: () => { state.preset = p.id; state.sort = null; state.limit = 100; try { history.replaceState(null, "", "#p=" + p.id); } catch (e) { /* ignore */ } renderAll(); },
+    }, p.label, el("span", { class: "n", text: n === null ? "—" : String(n) })));
+  }
+  const p = preset();
+  document.getElementById("presetDesc").textContent = p.needs && !DATA.status[p.needs] ? p.needsMsg : p.desc;
+}
+
+function columns() {
+  const p = preset();
+  const extra = (p.extra || []).filter(k => !BASE_COLS.includes(k));
+  const cols = [...BASE_COLS];
+  const at = cols.indexOf("vol") + 1;
+  cols.splice(at, 0, ...extra);
+  if (state.preset === "all") cols.splice(cols.indexOf("vol") + 1, 0, "value");
+  return cols;
+}
+function currentSort() { return state.sort || preset().sort; }
+
+function renderTable() {
+  const p = preset(), [sk, sd] = currentSort(), cols = columns();
+  const blocked = p.needs && !DATA.status[p.needs];
+  let rows = blocked ? [] : ROWS.filter(r => baseFilter(r) && searchFilter(r) && p.f(r));
+  rows.sort((a, b) => {
+    const va = a[sk], vb = b[sk];
+    if (!isNum(va) && !isNum(vb)) return a.code.localeCompare(b.code);
+    if (!isNum(va)) return 1;
+    if (!isNum(vb)) return -1;
+    return (va - vb) * sd || a.code.localeCompare(b.code);
+  });
+  document.getElementById("count").textContent = `共 ${NF0.format(rows.length)} 檔` + (rows.length > state.limit ? `，顯示前 ${NF0.format(state.limit)} 檔` : "");
+
+  const head = document.getElementById("thead");
+  head.replaceChildren(el("th", { scope: "col", class: "stick" }, "代號／名稱"));
+  for (const k of cols) {
+    const def = COLDEFS[k], sorted = k === sk;
+    head.append(el("th", { scope: "col", title: def.title || null, "aria-sort": sorted ? (sd < 0 ? "descending" : "ascending") : null },
+      el("button", {
+        type: "button", onclick: () => {
+          state.sort = sorted ? [k, -sd] : [k, -1]; state.limit = 100; renderTable();
+        },
+      }, def.label, sorted ? el("span", { class: "arrow", text: sd < 0 ? "▼" : "▲" }) : null)));
+  }
+
+  const body = document.getElementById("tbody");
+  body.replaceChildren();
+  if (!rows.length) {
+    body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "empty", text: blocked ? p.needsMsg : "沒有符合條件的股票。" })));
+  }
+  const frag = document.createDocumentFragment();
+  for (const r of rows.slice(0, state.limit)) {
+    const tr = el("tr", { tabindex: "0", onclick: () => openDetail(r.code), onkeydown: (e) => { if (e.key === "Enter") openDetail(r.code); } },
+      el("td", { class: "stick name" }, el("span", { class: "code", text: r.code }), r.name, el("span", { class: "mk", text: r.market })));
+    for (const k of cols) {
+      const def = COLDEFS[k], v = r[k];
+      const cls = [isNum(v) ? (def.dir ? dirClass(v) : "") : "na", k === sk ? "sorted" : ""].filter(Boolean).join(" ");
+      tr.append(el("td", { class: cls || null, text: def.fmt(v) }));
+    }
+    frag.append(tr);
+  }
+  body.append(frag);
+  document.getElementById("more").hidden = rows.length <= state.limit;
+}
+function renderAll() { renderPresets(); renderTable(); }
+
+// ---------- insider declarations ----------
+(function renderInsider() {
+  const body = document.getElementById("insBody");
+  if (!DATA.insider.length) { body.append(el("tr", {}, el("td", { colspan: 7, class: "empty", text: "近 30 天沒有申報資料（資料從開始執行後逐日累積）。" }))); return; }
+  for (const rec of DATA.insider) {
+    const pct = rec.held_lots ? rec.lots / rec.held_lots * 100 : null;
+    const known = BY_CODE[rec.code];
+    body.append(el("tr", { tabindex: known ? "0" : null, onclick: known ? () => openDetail(rec.code) : null, onkeydown: known ? (e) => { if (e.key === "Enter") openDetail(rec.code); } : null },
+      el("td", { text: md(rec.date) }),
+      el("td", {}, el("span", { class: "code", text: rec.code + " " }), rec.name),
+      el("td", { text: rec.role }),
+      el("td", { text: rec.method || "—" }),
+      el("td", { class: "num", text: fmtNum(rec.lots) }),
+      el("td", { class: "num", text: isNum(pct) ? fmtNum(pct, 1) + "%" : "—" }),
+      el("td", { text: rec.period }),
+    ));
+  }
+})();
+
+// ---------- stock detail ----------
+const dlg = document.getElementById("detail");
+document.getElementById("dlgClose").addEventListener("click", () => dlg.close());
+dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
+
+function openDetail(code) {
+  const r = BY_CODE[code];
+  if (!r) return;
+  document.getElementById("dlgTitle").textContent = `${r.code} ${r.name}`;
+  document.getElementById("dlgMeta").textContent = `${r.market}・${r.industry}・資料日期 ${DATA.data_date}`;
+  const px = document.getElementById("dlgPx");
+  px.replaceChildren(fmtPrice(r.close), el("span", { class: dirClass(r.chg_pct), text: fmtSigned(r.chg_pct, 2, "%") }));
+
+  const kv = el("dl", { class: "kv" });
+  const add = (label, value, cls) => kv.append(el("div", {}, el("dt", { text: label }), el("dd", { class: cls || null, text: value })));
+  add("5 日／20 日漲跌", `${fmtSigned(r.ret5, 1, "%")}／${fmtSigned(r.ret20, 1, "%")}`);
+  add("月線乖離", fmtSigned(r.ma20_gap, 1, "%"), dirClass(r.ma20_gap));
+  add("成交量／5 日均量", `${fmtNum(r.vol)}／${fmtNum(r.vol5)} 張`);
+  add("外資 今日／5 日", `${fmtSigned(r.f1)}／${fmtSigned(r.f5)} 張`, dirClass(r.f5));
+  add("外資 20 日／連續", `${fmtSigned(r.f20)} 張／${fmtStreak(r.fs)}`);
+  add("投信 今日／5 日", `${fmtSigned(r.t1)}／${fmtSigned(r.t5)} 張`, dirClass(r.t5));
+  add("投信 20 日／連續", `${fmtSigned(r.t20)} 張／${fmtStreak(r.ts)}`);
+  add("投信 5 日佔股本", fmtSigned(r.t5cap, 2, "%"));
+  add("自營商今日", fmtSigned(r.d1) + " 張", dirClass(r.d1));
+  add("融資餘額（今日增減）", `${fmtNum(r.m_bal)}（${fmtSigned(r.m_chg)}）張`);
+  add("融資 5 日變化", fmtSigned(r.m_chg5_pct, 1, "%"));
+  add("融券餘額／券資比", `${fmtNum(r.s_bal)} 張／${fmtNum(r.s_ratio, 1)}%`);
+  add("本益比／淨值比", `${fmtNum(r.pe, 1)}／${fmtNum(r.pb, 2)}`);
+  add("殖利率", isNum(r.yld) ? fmtNum(r.yld, 2) + "%" : "—");
+  add(`月營收（${r.rev_month || "—"}）`, isNum(r.rev) ? fmtNum(r.rev, 2) + " 億" : "—");
+  add("營收 年增／月增", `${fmtSigned(r.rev_yoy, 1, "%")}／${fmtSigned(r.rev_mom, 1, "%")}`, dirClass(r.rev_yoy));
+  add("累計營收年增", fmtSigned(r.rev_cum_yoy, 1, "%"), dirClass(r.rev_cum_yoy));
+  add("千張大戶（週增減）", isNum(r.big) ? `${fmtNum(r.big, 2)}%（${fmtSigned(r.big_chg, 2)}）` : "—");
+  add("400 張以上／50 張以下", isNum(r.b400) ? `${fmtNum(r.b400, 1)}%／${fmtNum(r.retail, 1)}%` : "—");
+  add("集保股東人數（週變化）", isNum(r.holders) ? `${fmtNum(r.holders)}（${fmtSigned(r.holders_chg, 2, "%")}）` : "—");
+
+  const body = document.getElementById("dlgBody");
+  body.replaceChildren(kv);
+  if (DATA.rev_notes[code]) body.append(el("p", { class: "revnote", text: "營收說明：" + DATA.rev_notes[code] }));
+
+  const S = DATA.series;
+  const charts = el("div", { class: "charts" });
+  const card = (title, cap, wide) => {
+    const host = el("div");
+    charts.append(el("div", { class: "chart-card" + (wide ? " wide" : "") }, el("h4", {}, title, el("span", { class: "cap", text: cap })), host));
+    return host;
+  };
+  const hPrice = card("收盤價", `近 ${S.dates.length} 個交易日`, true);
+  const hF = card("外資買賣超", "張／日，紅＝買超、綠＝賣超");
+  const hT = card("投信買賣超", "張／日，紅＝買超、綠＝賣超");
+  body.append(charts);
+
+  const tbl = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", { scope: "col", text: "日期" }), el("th", { scope: "col", text: "收盤" }),
+    el("th", { scope: "col", text: "外資（張）" }), el("th", { scope: "col", text: "投信（張）" }))));
+  const tb = el("tbody");
+  const off = S.dates.length - S.insti_dates.length;
+  for (let i = S.dates.length - 1; i >= Math.max(0, S.dates.length - 20); i--) {
+    const f = i - off >= 0 ? S.foreign[code][i - off] : null, t = i - off >= 0 ? S.trust[code][i - off] : null;
+    tb.append(el("tr", {}, el("td", { text: S.dates[i] }), el("td", { text: fmtPrice(S.close[code][i]) }),
+      el("td", { class: dirClass(f), text: fmtSigned(f) }), el("td", { class: dirClass(t), text: fmtSigned(t) })));
+  }
+  tbl.append(tb);
+  body.append(el("details", {}, el("summary", { text: "數據表（近 20 日）" }), el("div", { class: "table-scroll" }, tbl)));
+
+  const ins = DATA.insider.filter(x => x.code === code);
+  if (ins.length) {
+    const list = el("ul");
+    for (const x of ins) list.append(el("li", { text: `${x.date} ${x.role}・${x.method || "—"}・${fmtNum(x.lots)} 張（有效期間 ${x.period}）` }));
+    body.append(el("details", { open: true }, el("summary", { text: `內部人申報轉讓（${ins.length} 筆）` }), list));
+  }
+  body.append(el("div", { class: "links" },
+    el("a", { href: `https://goodinfo.tw/tw/StockDetail.asp?STOCK_ID=${encodeURIComponent(code)}`, target: "_blank", rel: "noopener", text: "Goodinfo 個股資料 ↗" }),
+    el("a", { href: `https://tw.stock.yahoo.com/quote/${encodeURIComponent(code)}`, target: "_blank", rel: "noopener", text: "Yahoo 股市 ↗" }),
+  ));
+
+  if (!dlg.open) dlg.showModal();
+  dlg.scrollTop = 0;
+  makeChart(hPrice, { kind: "line", height: 170, dates: S.dates, values: S.close[code], fmt: fmtPrice, name: "收盤價", aria: `${r.name}近 ${S.dates.length} 日收盤價` });
+  makeChart(hF, { kind: "bar", height: 130, dates: S.insti_dates, values: S.foreign[code], fmt: v => fmtSigned(v) + " 張", name: "外資", aria: `${r.name}外資每日買賣超` });
+  makeChart(hT, { kind: "bar", height: 130, dates: S.insti_dates, values: S.trust[code], fmt: v => fmtSigned(v) + " 張", name: "投信", aria: `${r.name}投信每日買賣超` });
+}
+
+renderAll();
+</script>
+</body>
+</html>
