@@ -134,6 +134,13 @@ h2 { font-size: 16px; margin: 0 0 10px; font-weight: 650; }
 .pgroup { color: var(--muted); font-size: 12px; min-width: 3.6em; }
 .tile .value .sep { color: var(--muted); font-weight: 400; }
 .preset-desc { color: var(--ink-2); margin: 2px 0 10px; font-size: 13px; min-height: 20px; }
+.preset-desc p { margin: 0 0 4px; }
+.desc-list { margin: 0; padding-left: 18px; line-height: 1.6; }
+.desc-list b { color: var(--ink); font-weight: 600; }
+.modes { display: inline-flex; gap: 4px; margin: 0 2px; vertical-align: middle; }
+.mode { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 1px 10px; cursor: pointer; font-size: 12.5px; }
+.mode[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.preset[disabled] { opacity: 0.5; cursor: not-allowed; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .filters input[type="search"] { flex: 1 1 200px; min-width: 0; max-width: 320px; }
 .filters input, .filters select { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 6px 9px; }
@@ -243,7 +250,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
     <div class="pad">
       <h2 id="screenTitle">選股清單</h2>
       <div class="presets" id="presets" role="group" aria-label="快速篩選"></div>
-      <p class="preset-desc" id="presetDesc"></p>
+      <div class="preset-desc" id="presetDesc" aria-live="polite"></div>
       <div class="filters">
         <input type="search" id="q" placeholder="搜尋代號或名稱" aria-label="搜尋代號或名稱">
         <label>市場 <select id="market"><option value="">全部</option><option>上市</option><option>上櫃</option></select></label>
@@ -685,7 +692,7 @@ document.getElementById("subtitle").textContent =
 // ---------- screener ----------
 const ge = (v, t) => isNum(v) && v >= t;
 const PRESETS = [
-  { id: "all", group: "all", label: "全部", desc: "所有上市櫃普通股（不含 ETF），預設依成交值排序。點任一列看個股細節。", f: () => true, sort: ["value", -1] },
+  { id: "all", group: "all", label: "全部", desc: "所有上市櫃普通股（不含 ETF），預設依成交值排序。下面的按鈕可以複選，例如同時選「外資連買」和「營收創新高」；再點一次取消。點任一列看個股細節。", f: () => true, sort: ["value", -1] },
   { id: "foreign", group: "chip", label: "外資連買", desc: "外資連續買超 ≥ 5 天、近 5 日均量 ≥ 500 張；依 5 日買超張數排序。", f: r => ge(r.fs, 5) && ge(r.vol5, 500), sort: ["f5", -1], extra: ["f5vol"] },
   { id: "trust", group: "chip", label: "投信連買", desc: "投信連續買超 ≥ 3 天、近 5 日均量 ≥ 300 張；依 5 日買超張數排序。", f: r => ge(r.ts, 3) && ge(r.vol5, 300), sort: ["t5", -1], extra: ["t5cap"] },
   { id: "trustcap", group: "chip", label: "投信認養", desc: "投信近 5 日買超佔股本 ≥ 0.5%（中小型股常見）；依佔比排序。", f: r => ge(r.t5cap, 0.5), sort: ["t5cap", -1], extra: ["t5cap"] },
@@ -753,12 +760,25 @@ const VIEWS = {
   fund: ["close", "chg_pct", "rev", "rev_yoy", "rev_mom", "rev_cum_yoy", "rev_high", "rev_streak", "pe", "pe_pct", "yld", "pb"],
 };
 
-const state = { preset: "all", view: "", q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 };
+// selected：已選的快速篩選（依點選順序，第一個決定預設排序）；mode：and = 同時符合、or = 符合任一
+const state = { selected: [], mode: "and", view: "", q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 };
+const PRESET_BY_ID = Object.fromEntries(PRESETS.map(p => [p.id, p]));
+const available = (p) => !(p.needs && !DATA.status[p.needs]);
 try {
   const h = new URLSearchParams(location.hash.slice(1));
-  if (PRESETS.some(p => p.id === h.get("p"))) state.preset = h.get("p");
+  state.selected = (h.get("p") || "").split(",").filter(id => id !== "all" && PRESET_BY_ID[id] && available(PRESET_BY_ID[id]));
+  if (h.get("m") === "or") state.mode = "or";
 } catch (e) { /* ignore */ }
-const preset = () => PRESETS.find(p => p.id === state.preset);
+const selectedPresets = () => state.selected.map(id => PRESET_BY_ID[id]);
+function presetMatch(r) {
+  const sel = selectedPresets();
+  if (!sel.length) return true;
+  return state.mode === "or" ? sel.some(p => p.f(r)) : sel.every(p => p.f(r));
+}
+function saveHash() {
+  const hash = state.selected.length ? `#p=${state.selected.join(",")}${state.mode === "or" ? "&m=or" : ""}` : location.pathname + location.search;
+  try { history.replaceState(null, "", hash); } catch (e) { /* ignore */ }
+}
 
 (function initFilters() {
   const ind = document.getElementById("industry");
@@ -769,9 +789,10 @@ const preset = () => PRESETS.find(p => p.id === state.preset);
   document.getElementById("minVol").addEventListener("change", (e) => { state.minVol = +e.target.value; state.limit = 100; renderAll(); });
   document.getElementById("view").addEventListener("change", (e) => { state.view = e.target.value; renderTable(); });
   document.getElementById("reset").addEventListener("click", () => {
-    Object.assign(state, { view: "", q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 });
+    Object.assign(state, { selected: [], mode: "and", view: "", q: "", market: "", industry: "", minVol: 0, sort: null, limit: 100 });
     for (const id of ["q", "market", "industry", "view"]) document.getElementById(id).value = "";
     document.getElementById("minVol").value = "0";
+    saveHash();
     renderAll();
   });
   document.getElementById("moreBtn").addEventListener("click", () => { state.limit += 200; renderTable(); });
@@ -797,32 +818,61 @@ function renderPresets() {
     const row = el("div", { class: "prow" }, label ? el("span", { class: "pgroup", text: label }) : null);
     box.append(row);
     for (const p of PRESETS.filter(x => x.group === group)) {
-      const disabled = p.needs && !DATA.status[p.needs];
-      const n = disabled ? null : base.filter(p.f).length;
+      const isAll = p.id === "all", ok = available(p);
+      const pressed = isAll ? !state.selected.length : state.selected.includes(p.id);
+      const n = ok ? base.filter(p.f).length : null;
       row.append(el("button", {
-        class: "preset", type: "button", "aria-pressed": String(p.id === state.preset),
-        onclick: () => { state.preset = p.id; state.sort = null; state.limit = 100; try { history.replaceState(null, "", "#p=" + p.id); } catch (e) { /* ignore */ } renderAll(); },
+        class: "preset", type: "button", "aria-pressed": String(pressed), disabled: !ok, title: ok ? null : p.needsMsg,
+        onclick: () => {
+          if (isAll) state.selected = [];
+          else state.selected = pressed ? state.selected.filter(id => id !== p.id) : [...state.selected, p.id];
+          state.sort = null;
+          state.limit = 100;
+          saveHash();
+          renderAll();
+        },
       }, p.label, el("span", { class: "n", text: n === null ? "—" : String(n) })));
     }
   }
-  const p = preset();
-  document.getElementById("presetDesc").textContent = p.needs && !DATA.status[p.needs] ? p.needsMsg : p.desc;
+  renderPresetDesc();
 }
 
+function renderPresetDesc() {
+  const box = document.getElementById("presetDesc"), sel = selectedPresets();
+  box.replaceChildren();
+  if (sel.length <= 1) {
+    box.append(el("p", { text: (sel[0] || PRESET_BY_ID.all).desc }));
+    return;
+  }
+  const modes = el("span", { class: "modes", role: "group", "aria-label": "條件組合方式" },
+    ...[["and", "同時符合"], ["or", "符合任一"]].map(([m, label]) => el("button", {
+      type: "button", class: "mode", "aria-pressed": String(state.mode === m),
+      onclick: () => { state.mode = m; state.limit = 100; saveHash(); renderAll(); },
+    }, label)));
+  box.append(el("p", {}, `已選 ${sel.length} 個條件，`, modes, "，依「", sel[0].label, "」的排序："));
+  const list = el("ul", { class: "desc-list" });
+  for (const p of sel) list.append(el("li", {}, el("b", { text: `${p.label}：` }), p.desc));
+  box.append(list);
+}
+
+function currentSort() {
+  return state.sort || (selectedPresets()[0] || PRESET_BY_ID.all).sort;
+}
 function columns() {
-  const p = preset(), view = state.view || p.view || "mix";
+  const sel = selectedPresets();
+  const views = [...new Set(sel.map(p => p.view || "mix"))];
+  const view = state.view || (views.length === 1 ? views[0] : "mix");
   const cols = [...VIEWS[view]];
-  const extra = (p.extra || []).filter(k => !cols.includes(k));
+  const extra = [...new Set([...sel.flatMap(p => p.extra || []), currentSort()[0]])]
+    .filter(k => COLDEFS[k] && !cols.includes(k));  // 排序欄位一定要看得到
   cols.splice(cols.includes("vol") ? cols.indexOf("vol") + 1 : 2, 0, ...extra);
-  if (state.preset === "all" && view === "mix") cols.splice(cols.indexOf("vol") + 1, 0, "value");
+  if (!sel.length && view === "mix" && !cols.includes("value")) cols.splice(cols.indexOf("vol") + 1, 0, "value");
   return cols;
 }
-function currentSort() { return state.sort || preset().sort; }
 
 function renderTable() {
-  const p = preset(), [sk, sd] = currentSort(), cols = columns();
-  const blocked = p.needs && !DATA.status[p.needs];
-  let rows = blocked ? [] : ROWS.filter(r => baseFilter(r) && searchFilter(r) && p.f(r));
+  const sel = selectedPresets(), [sk, sd] = currentSort(), cols = columns();
+  let rows = ROWS.filter(r => baseFilter(r) && searchFilter(r) && presetMatch(r));
   rows.sort((a, b) => {
     const va = a[sk], vb = b[sk];
     if (!isNum(va) && !isNum(vb)) return a.code.localeCompare(b.code);
@@ -847,7 +897,10 @@ function renderTable() {
   const body = document.getElementById("tbody");
   body.replaceChildren();
   if (!rows.length) {
-    body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "empty", text: blocked ? p.needsMsg : "沒有符合條件的股票。" })));
+    const msg = sel.length > 1 && state.mode === "and"
+      ? "沒有同時符合這些條件的股票。可以改成「符合任一」，或少選幾個條件。"
+      : "沒有符合條件的股票。";
+    body.append(el("tr", {}, el("td", { colspan: cols.length + 1, class: "empty", text: msg })));
   }
   const frag = document.createDocumentFragment();
   for (const r of rows.slice(0, state.limit)) {
