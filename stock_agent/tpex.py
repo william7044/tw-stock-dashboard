@@ -180,6 +180,18 @@ def valuation():
     return day, rows
 
 
+def valuation_on(day):
+    """指定日期的本益比、殖利率、淨值比（回測用的每月快照）。"""
+    table = _www("afterTrading/peQryDate", day)
+    if table is None:
+        return None
+    i_code, i_pe, i_yield, i_pb = _cols(table["fields"], "股票代號", "本益比", "殖利率(%)", "股價淨值比")
+    return {
+        clean(r[i_code]): [num(r[i_pe]), num(r[i_yield]), num(r[i_pb])]
+        for r in table["data"] if is_stock(clean(r[i_code]))
+    }
+
+
 def revenue():
     return mops.parse_revenue(_openapi("/mopsfin_t187ap05_O"))
 

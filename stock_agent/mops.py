@@ -1,8 +1,17 @@
 """公開資訊觀測站（MOPS）資料的共用解析：月營收、內部人持股轉讓事前申報、產業別名稱。
 
 證交所與櫃買中心的 OpenAPI 都轉載了這些 MOPS 資料表，欄位名稱幾乎相同。
+OpenAPI 只有最新月份的營收；回補舊月份時直接讀 MOPS 舊版網站的每月營收彙總頁。
 """
+import re
+
+from .net import FetchError, fetch
 from .parse import clean, is_stock, lots, num, r2, roc_month_to_iso, roc_to_iso
+
+MOPS_REVENUE = "https://mopsov.twse.com.tw/nas/t21"
+_ROW = re.compile(r"<tr[^>]*>(.*?)</tr>", re.I | re.S)
+_CELL = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.I | re.S)
+_TAG = re.compile(r"<[^>]+>")
 
 REVENUE_FIELDS = ["revenue", "yoy", "mom", "cum_yoy", "revenue_last_year", "industry", "note"]
 
@@ -39,6 +48,47 @@ def parse_revenue(records):
             "" if note in ("-", "－") else note[:120],
         ]
     return months
+
+
+def parse_revenue_page(html):
+    """MOPS 每月營收彙總頁 → {code: 與 parse_revenue 相同格式的列}。
+
+    欄位：公司代號、公司名稱、當月營收、上月營收、去年當月營收、上月比較增減(%)、
+    去年同月增減(%)、當月累計營收、去年累計營收、前期比較增減(%)、備註
+    """
+    rows = {}
+    for tr in _ROW.findall(html):
+        cells = [clean(_TAG.sub("", c)) for c in _CELL.findall(tr)]
+        if len(cells) < 11 or not is_stock(cells[0]):
+            continue
+        revenue, last_year = num(cells[2]), num(cells[4])
+        rows[cells[0]] = [
+            None if revenue is None else int(revenue),
+            r2(num(cells[6])),
+            r2(num(cells[5])),
+            r2(num(cells[9])),
+            None if last_year is None else int(last_year),
+            "",
+            "" if cells[10] in ("-", "－") else cells[10][:120],
+        ]
+    return rows
+
+
+def revenue_history(month):
+    """某個月（'2025-09'）上市＋上櫃的月營收；國內（_0）與 KY 公司（_1）分開兩頁。"""
+    year, mon = int(month[:4]) - 1911, int(month[5:7])
+    rows, errors = {}, []
+    for market in ("sii", "otc"):
+        for kind in (0, 1):
+            try:
+                html = fetch(f"{MOPS_REVENUE}/{market}/t21sc03_{year}_{mon}_{kind}.html").decode("cp950", errors="replace")
+            except FetchError as e:
+                errors.append(str(e))
+                continue
+            rows.update(parse_revenue_page(html))
+    if not rows and errors:
+        raise FetchError(f"MOPS 月營收 {month}: {errors[0]}")
+    return rows
 
 
 def parse_insider(records, market):

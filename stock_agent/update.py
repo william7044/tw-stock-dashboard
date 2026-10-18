@@ -5,7 +5,7 @@
     py -m stock_agent.update --backfill-days 40 # 第一次執行：回補 40 個交易日
 """
 import argparse
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from . import mops, tdcc, tpex, twse
 from .net import FetchError
@@ -154,10 +154,53 @@ class Updater:
         print(f"  公司基本資料: {len(rows)} 家")
 
     def update_valuation(self):
+        merged, first_day = {}, None
         for market, source in (("twse", twse.valuation), ("tpex", tpex.valuation)):
             day, rows = source()
             if self.write({"date": day, "_fields": ["pe", "yield", "pb"], "rows": rows}, "valuation", f"{market}.json"):
                 print(f"  本益比/殖利率 {market} {day}: {len(rows)} 檔")
+            merged.update(rows)
+            first_day = first_day or day
+        # 每個月留一份快照，給回測用（高殖利率訊號每月檢查一次）
+        if first_day and not list(self.store.path("valuation", "history").glob(f"{first_day[:7]}-*.json")):
+            self.write({"date": first_day, "_fields": ["pe", "yield", "pb"], "rows": merged}, "valuation", "history", f"{first_day}.json")
+
+    # ---- 回測用的歷史資料（一次性回補） ----
+    def update_history(self, months):
+        """回補最近 N 個月的月營收（MOPS）與每月第一個交易日的本益比/殖利率快照。"""
+        print(f"回補 {months} 個月的月營收與估值快照")
+        year, mon = self.now.year, self.now.month
+        wanted = []
+        for _ in range(months):
+            year, mon = (year, mon - 1) if mon > 1 else (year - 1, 12)
+            wanted.append(f"{year:04d}-{mon:02d}")
+        for month in sorted(wanted):
+            if self.store.path("revenue", f"{month}.json").exists():
+                continue
+            try:
+                rows = mops.revenue_history(month)
+            except FetchError as e:
+                self.warn(f"月營收 {month}: {e}")
+                continue
+            if rows:
+                self.write({"month": month, "_fields": mops.REVENUE_FIELDS, "rows": rows}, "revenue", f"{month}.json")
+                print(f"  月營收 {month}: {len(rows)} 家（MOPS）")
+
+        firsts = {}
+        for iso in self.store.day_dates():
+            firsts.setdefault(iso[:7], iso)
+        for month, iso in sorted(firsts.items())[-months:]:
+            if list(self.store.path("valuation", "history").glob(f"{month}-*.json")):
+                continue
+            rows = {}
+            for label, source in (("上市", twse.valuation_on), ("上櫃", tpex.valuation_on)):
+                try:
+                    rows.update(source(date.fromisoformat(iso)) or {})
+                except FetchError as e:
+                    self.warn(f"本益比 {label} {iso}: {e}")
+            if rows:
+                self.write({"date": iso, "_fields": ["pe", "yield", "pb"], "rows": rows}, "valuation", "history", f"{iso}.json")
+                print(f"  估值快照 {iso}: {len(rows)} 檔")
 
     def update_insider(self):
         records = twse.insider() + tpex.insider()
@@ -212,10 +255,12 @@ class Updater:
         self.snapshot("櫃買指數/法人金額", self.update_tpex_extras)
 
 
-def run(backfill_days=0, store=None, now=None):
+def run(backfill_days=0, history_months=0, store=None, now=None):
     store = store or Store()
     updater = Updater(store, now or datetime.now(TAIPEI))
     updater.update_daily(backfill_days)
+    if history_months:
+        updater.update_history(history_months)
     updater.update_snapshots()
     warnings = updater.warnings[-30:]
     if updater.changed or warnings != store.read("state.json", default={}).get("warnings", []):
@@ -231,8 +276,9 @@ def run(backfill_days=0, store=None, now=None):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="更新台股免費資料")
     parser.add_argument("--backfill-days", type=int, default=0, help="確保最近 N 個交易日都有資料（第一次建議 40）")
+    parser.add_argument("--history-months", type=int, default=0, help="回補最近 N 個月的月營收與估值快照（回測用）")
     args = parser.parse_args(argv)
-    run(backfill_days=args.backfill_days)
+    run(backfill_days=args.backfill_days, history_months=args.history_months)
 
 
 if __name__ == "__main__":

@@ -4,10 +4,11 @@
 """
 import tempfile
 import unittest
-from datetime import date, datetime
+from array import array
+from datetime import date, datetime, timedelta
 from unittest import mock
 
-from stock_agent import analyze, mops, parse, tdcc, tpex, twse, update
+from stock_agent import analyze, backtest, indicators, mops, parse, tdcc, tpex, twse, update
 from stock_agent.net import FetchError
 from stock_agent.store import Store
 
@@ -127,6 +128,13 @@ class SnapshotTests(unittest.TestCase):
         self.assertEqual(rows["2330"][:2], [3098860, 25932370067])
         self.assertEqual(rows["2330"][16], 84.56)
 
+    def test_mops_revenue_page(self):
+        html = ("<tr><th>公司代號</th></tr><tr align=right><td align=center>2330</td><td align=left>台積電</td>"
+                "<td nowrap> 511,857,399</td><td nowrap> 514,805,337</td><td nowrap> 330,980,920</td>"
+                "<td nowrap> -0.57</td><Td nowrap> 54.64</td><td nowrap> 3,898,726,974</td>"
+                "<td nowrap> 2,762,963,851</td><td nowrap> 41.10</td><td align=left>-</td></tr>")
+        self.assertEqual(mops.parse_revenue_page(html), {"2330": [511857399, 54.64, -0.57, 41.1, 330980920, "", ""]})
+
     def test_revenue_and_insider(self):
         months = mops.parse_revenue([{
             "資料年月": "11509", "公司代號": "2330", "產業別": "半導體業", "營業收入-當月營收": "511857399",
@@ -177,6 +185,86 @@ class AnalyzeTests(unittest.TestCase):
         self.assertAlmostEqual(row["chg_pct"], -1.82, places=2)
         self.assertEqual(row["t5cap"], 5.0)  # 50 張 / 1,000 張
         self.assertEqual(payload["data_date"], "2026-10-10")
+
+
+class BacktestTests(unittest.TestCase):
+    NAN = float("nan")
+
+    def test_adjusted_index_ignores_ex_dividend_drop(self):
+        # 第 3 天除息 5 元：收盤 95、參考價 97（漲跌 -2），只算 -2/97 的跌幅
+        idx = backtest.adjusted_index(array("d", [100, 102, 95, self.NAN, 96]), array("d", [self.NAN, 2, -2, self.NAN, 1]))
+        self.assertAlmostEqual(idx[1], 1.02)
+        self.assertAlmostEqual(idx[2], 1.02 * 95 / 97)
+        self.assertAlmostEqual(idx[3], idx[2])  # 沒成交的日子沿用
+        self.assertAlmostEqual(idx[4], idx[2] * 96 / 95)
+
+    def test_streaks_and_transitions(self):
+        self.assertEqual(backtest.streaks([1, 2, 0, -1, -3, self.NAN, -2]), [1, 2, 0, -1, -2, -2, -3])
+        self.assertEqual(backtest.transitions([False, True, True, False, True], 0), [1, 4])
+
+    def test_signal_enters_next_day_and_is_compared_with_market(self):
+        docs = []
+        for i in range(40):
+            rising, prev = 100 * 1.01 ** i, 100 * 1.01 ** (i - 1)
+            docs.append({
+                "date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(),
+                "twse": {
+                    "quotes": {"rows": {"1111": [rising, rising - prev if i else None, 1000, 1.0],
+                                        "2222": [50.0, 0.0, 1000, 1.0]}},
+                    "insti": {"rows": {"1111": [10 if 22 <= i <= 30 else -10, 0, 0, 0], "2222": [-10, 0, 0, 0]}},
+                },
+            })
+        panel = backtest.Panel(docs)
+        events = backtest.daily_events(panel, {})
+        self.assertEqual(events["foreign"], [("1111", 27)])  # 第 26 天連買滿 5 天，第 27 天收盤進場
+        with mock.patch.object(backtest, "MIN_SAMPLES", 1):
+            stats = backtest.summarize(events["foreign"], panel, backtest.baselines(panel))["5"]
+        self.assertAlmostEqual(stats["mean"], 5.1, places=1)  # 1.01^5 - 1
+        self.assertAlmostEqual(stats["base"], 2.55, places=1)  # 和不漲的 2222 平均
+        self.assertAlmostEqual(stats["excess"], 2.55, places=1)
+        self.assertEqual(stats["n"], 1)
+
+
+class IndicatorTests(unittest.TestCase):
+    def test_ema_seeds_with_simple_average(self):
+        out = indicators.ema([1, 2, 3, 4, 5], 3)
+        self.assertTrue(indicators.isnan(out[1]))
+        self.assertEqual(out[2:], [2.0, 3.0, 4.0])
+
+    def test_rsi_and_macd_edge_cases(self):
+        self.assertEqual(indicators.rsi(list(range(1, 30)))[-1], 100.0)
+        self.assertEqual(indicators.rsi([10.0] * 30)[-1], 50.0)
+        dif, dea = indicators.macd([10.0] * 60)
+        self.assertEqual((dif[-1], dea[-1]), (0.0, 0.0))
+
+    def test_prior_extremes_excludes_today(self):
+        highs, lows = indicators.prior_extremes([5, 3, 8, 1, 9, 2], 3, min_days=1)
+        self.assertTrue(indicators.isnan(highs[0]))
+        self.assertEqual(highs[1:], [5, 5, 8, 8, 9])
+        self.assertEqual(lows[1:], [5, 3, 3, 1, 1])
+        self.assertEqual(indicators.percent_rank([1, 2, 3, 4], 3), 50)
+
+    def test_technicals_flags_highs_lows_and_breadth(self):
+        docs = []
+        for i in range(140):
+            up, down = 100 * 1.01 ** i, 100 * 0.99 ** i
+            docs.append({"date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "twse": {"quotes": {"rows": {
+                "1111": [up, up - 100 * 1.01 ** (i - 1) if i else 0.0, 1000, 1.0],
+                "2222": [down, down - 100 * 0.99 ** (i - 1) if i else 0.0, 1000, 1.0],
+            }}}})
+        metrics, breadth = analyze.technicals(backtest.Panel(docs), {"1111", "2222"})
+        self.assertEqual((metrics["1111"]["new_hl"], metrics["1111"]["align"], metrics["1111"]["pos52"]), (1, 1, 100.0))
+        self.assertEqual((metrics["2222"]["new_hl"], metrics["2222"]["align"], metrics["2222"]["pos52"]), (-1, -1, 0.0))
+        self.assertEqual(metrics["1111"]["rs"], 50)  # 兩檔中贏過另一檔
+        self.assertEqual(breadth[docs[-1]["date"]], [1, 1, 0, 1, 1])
+
+    def test_revenue_new_high_and_streak(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            for m in range(1, 13):
+                store.write({"month": f"2026-{m:02d}", "rows": {"1111": [100 + m, 5.0 if m > 9 else -1.0, 0, 0, 0, "", ""]}},
+                            "revenue", f"2026-{m:02d}.json")
+            self.assertEqual(analyze.revenue_metrics(store)["1111"], (1, 3))
 
 
 class StoreTests(unittest.TestCase):

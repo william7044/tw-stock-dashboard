@@ -161,6 +161,19 @@ def valuation():
     return day, rows
 
 
+def valuation_on(day):
+    """指定日期的本益比、殖利率、淨值比（回測用的每月快照）。"""
+    data = _www("afterTrading/BWIBBU_d", day, date=day.strftime("%Y%m%d"), selectType="ALL")
+    if not data or not data.get("data"):
+        return None
+    f = data["fields"]
+    i_code, i_pe, i_yield, i_pb = (f.index(n) for n in ("證券代號", "本益比", "殖利率(%)", "股價淨值比"))
+    return {
+        clean(r[i_code]): [num(r[i_pe]), num(r[i_yield]), num(r[i_pb])]
+        for r in data["data"] if is_stock(clean(r[i_code]))
+    }
+
+
 def revenue():
     return mops.parse_revenue(_openapi("/opendata/t187ap05_L"))
 

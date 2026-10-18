@@ -15,6 +15,7 @@ MIN_INTERVAL = {
     "openapi.twse.com.tw": 0.5,
     "www.tpex.org.tw": 1.5,
     "opendata.tdcc.com.tw": 1.0,
+    "mopsov.twse.com.tw": 2.0,
 }
 _last_request = {}
 

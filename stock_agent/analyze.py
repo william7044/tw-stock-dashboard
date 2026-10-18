@@ -4,12 +4,15 @@
 """
 from datetime import date, timedelta
 
+from . import indicators as ind
+from .backtest import Panel
 from .store import Store
 
 MARKETS = ("twse", "tpex")
 MARKET_LABEL = {"twse": "上市", "tpex": "上櫃"}
 WINDOW = 40  # 個股走勢圖顯示的交易日數
 INSTI_WINDOW = 20
+LONG_WINDOW = 260  # 技術指標（52 週高低點、季線）需要約一年的股價
 
 COLUMNS = [
     "code", "name", "market", "industry",
@@ -20,7 +23,128 @@ COLUMNS = [
     "rev", "rev_yoy", "rev_mom", "rev_cum_yoy", "rev_month",
     "big", "big_chg", "b400", "retail", "holders", "holders_chg",
     "ins_n", "ins_lots",
+    # 技術面（還原股價）
+    "ret60", "ma5", "ma20", "ma60", "align", "hi52", "lo52", "pos52", "dist_hi", "new_hl",
+    "vol_ratio", "rs", "rsi", "dif", "dea", "macd_state",
+    # 基本面延伸
+    "rev_high", "rev_streak", "pe_pct",
 ]
+TECH_KEYS = ["ret60", "ma5", "ma20", "ma60", "align", "hi52", "lo52", "pos52", "dist_hi", "new_hl",
+             "vol_ratio", "rs", "rsi", "dif", "dea", "macd_state"]
+
+
+def load_docs(store, count=LONG_WINDOW):
+    docs = [store.load_day(d) for d in store.day_dates()[-count:]]
+    return [d for d in docs if any("quotes" in d.get(m, {}) for m in MARKETS)]
+
+
+def _num(value, digits=2):
+    return None if value is None or ind.isnan(value) else round(value, digits)
+
+
+def technicals(panel, universe):
+    """每檔的技術指標，以及每天的漲跌家數、創 52 週新高／新低家數。
+
+    全部用還原股價（漲跌價差串成的指數 × 最新收盤），除權息不會造成假的跌破。
+    """
+    T, nan = panel.T, ind.NAN
+    adv, dec, flat, highs, lows = ([0] * T for _ in range(5))
+    metrics, ret60 = {}, {}
+    for code, s in panel.series.items():
+        closes, idx = s["close"], panel.index[code]
+        last = next((i for i in range(T - 1, -1, -1) if not ind.isnan(closes[i])), None)
+        if last is None:
+            continue
+        scale = closes[last] / idx[last]
+        adj = [v * scale if not ind.isnan(v) else nan for v in idx]
+        prior_hi, prior_lo = ind.prior_extremes(adj, 250, min_days=120)
+        for i in range(T):
+            if ind.isnan(closes[i]):
+                continue
+            chg = s["chg"][i]
+            if not ind.isnan(chg):
+                adv[i] += chg > 0
+                dec[i] += chg < 0
+                flat[i] += chg == 0
+            if not ind.isnan(prior_hi[i]):
+                highs[i] += adj[i] >= prior_hi[i]
+                lows[i] += adj[i] <= prior_lo[i]
+        if code not in universe:
+            continue
+
+        t, price = T - 1, adj[T - 1]
+        traded = not ind.isnan(closes[t])
+        ma5, ma20, ma60 = (ind.last_mean(adj, n) for n in (5, 20, 60))
+        align = None
+        if not ind.isnan(ma60):
+            align = 1 if price > ma5 > ma20 > ma60 else -1 if price < ma5 < ma20 < ma60 else 0
+        hi52 = lo52 = pos52 = dist_hi = new_hl = None
+        if not ind.isnan(prior_hi[t]):
+            hi52, lo52 = max(prior_hi[t], price), min(prior_lo[t], price)
+            pos52 = (price - lo52) / (hi52 - lo52) * 100 if hi52 > lo52 else None
+            dist_hi = (price / hi52 - 1) * 100
+            new_hl = (1 if price >= prior_hi[t] else -1 if price <= prior_lo[t] else 0) if traded else 0
+        prev_vols = [v for v in s["vol"][max(0, t - 20): t] if not ind.isnan(v)]
+        avg_vol = sum(prev_vols) / len(prev_vols) if len(prev_vols) >= 10 else 0
+        vol_ratio = s["vol"][t] / avg_vol if avg_vol > 0 and traded else None
+        r60 = price / adj[t - 60] - 1 if t >= 60 and not ind.isnan(adj[t - 60]) else None
+        if r60 is not None:
+            ret60[code] = r60
+        dif, dea = ind.macd(adj)
+        state = None
+        if not (ind.isnan(dif[t]) or ind.isnan(dea[t]) or ind.isnan(dif[t - 1]) or ind.isnan(dea[t - 1])):
+            above, was_above = dif[t] > dea[t], dif[t - 1] > dea[t - 1]
+            state = (2 if not was_above else 1) if above else (-2 if was_above else -1)
+        metrics[code] = {
+            "ret60": None if r60 is None else round(r60 * 100, 2),
+            "ma5": _num(ma5), "ma20": _num(ma20), "ma60": _num(ma60), "align": align,
+            "hi52": _num(hi52), "lo52": _num(lo52), "pos52": _num(pos52, 1), "dist_hi": _num(dist_hi), "new_hl": new_hl,
+            "vol_ratio": _num(vol_ratio), "rsi": _num(ind.rsi(adj)[t], 1),
+            "dif": _num(dif[t], 3), "dea": _num(dea[t], 3), "macd_state": state,
+        }
+    population = sorted(ret60.values())
+    for code, value in ret60.items():
+        metrics[code]["rs"] = ind.percent_rank(population, value)
+    breadth = {panel.dates[i]: [adv[i], dec[i], flat[i], highs[i], lows[i]] for i in range(T)}
+    return metrics, breadth
+
+
+def revenue_metrics(store):
+    """營收是否為 12 個月新高、年增率連續為正的月數。"""
+    series = {}
+    for path in store.files("revenue")[-13:]:
+        doc = store.read("revenue", path.name, default={})
+        for code, row in doc.get("rows", {}).items():
+            series.setdefault(code, []).append((doc["month"], row[0], row[1]))
+    out = {}
+    for code, months in series.items():
+        months.sort()
+        _, revenue, _ = months[-1]
+        previous = [r for _, r, _ in months[-12:-1] if r is not None]
+        high = (1 if revenue >= max(previous) else 0) if revenue is not None and len(previous) >= 11 else None
+        streak_months = 0
+        for _, _, yoy in reversed(months):
+            if yoy is None or yoy <= 0:
+                break
+            streak_months += 1
+        out[code] = (high, streak_months)
+    return out
+
+
+def pe_position(store, valuation):
+    """目前本益比在自己過去一年（每月快照）中的位置：0 = 最便宜、100 = 最貴。"""
+    snaps = [store.read("valuation", "history", p.name, default={})
+             for p in sorted(store.path("valuation", "history").glob("*.json"))][-13:]
+    out = {}
+    for code, row in valuation.items():
+        pe = row[0] if row else None
+        if not pe or pe <= 0:
+            continue
+        history = sorted(s["rows"][code][0] for s in snaps
+                         if s.get("rows", {}).get(code) and s["rows"][code][0] and s["rows"][code][0] > 0)
+        if len(history) >= 6:
+            out[code] = ind.percent_rank(history, pe)
+    return out
 
 
 def _round(value, digits=2):
@@ -77,10 +201,10 @@ def _latest_files(store, folder, count):
     return [store.read(folder, p.name, default={}) for p in store.files(folder)[-count:]]
 
 
-def build_payload(store=None):
+def build_payload(store=None, all_docs=None):
     store = store or Store()
-    docs = [store.load_day(d) for d in store.day_dates()[-max(WINDOW, INSTI_WINDOW) - 5:]]
-    docs = [d for d in docs if any("quotes" in d.get(m, {}) for m in MARKETS)][-WINDOW:]
+    all_docs = all_docs if all_docs is not None else load_docs(store)
+    docs = all_docs[-WINDOW:]
     if not docs:
         raise SystemExit("data/daily 沒有資料，請先執行 py -m stock_agent.update --backfill-days 40")
     dates = [d["date"] for d in docs]
@@ -120,6 +244,10 @@ def build_payload(store=None):
     for rec in insider:
         n, lots_sum = ins_by_code.get(rec["code"], (0, 0))
         ins_by_code[rec["code"]] = (n + 1, lots_sum + (rec["lots"] or 0))
+
+    tech, breadth = technicals(Panel(all_docs[-LONG_WINDOW:]), set(market_of))
+    rev_extra = revenue_metrics(store)
+    pe_pct = pe_position(store, valuation)
 
     rows, series_close, series_foreign, series_trust = [], {}, {}, {}
     for code, market in sorted(market_of.items()):
@@ -184,6 +312,9 @@ def build_payload(store=None):
             t_now[0] if t_now else None,
             _pct(t_now[0] - t_prev[0], t_prev[0]) if t_now and t_prev and t_prev[0] else None,
             n_ins, lots_ins,
+            *[tech.get(code, {}).get(k) for k in TECH_KEYS],
+            *(rev_extra.get(code) or (None, None)),
+            pe_pct.get(code),
         ])
         series_close[code] = close_s
         series_foreign[code] = f_s[-INSTI_WINDOW:]
@@ -219,6 +350,7 @@ def build_payload(store=None):
             "insti_twse": market_series("twse", "market_insti"),
             "insti_tpex": market_series("tpex", "market_insti"),
             "margin_amount": [(doc.get("twse", {}).get("margin") or {}).get("amount") for doc in docs],
+            "breadth": [breadth.get(d) for d in dates],  # [上漲, 下跌, 平盤, 創52週新高, 創52週新低]
         },
         "columns": COLUMNS,
         "rows": rows,
