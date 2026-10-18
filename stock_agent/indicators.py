@@ -18,6 +18,21 @@ def last_mean(values, n):
     return sum(window) / n if len(window) == n else NAN
 
 
+def sma(values, n):
+    """每天的 n 日簡單移動平均（不足 n 個有效值為 NaN）。"""
+    out, window, total = [NAN] * len(values), deque(), 0.0
+    for i, v in enumerate(values):
+        if isnan(v):
+            continue
+        window.append(v)
+        total += v
+        if len(window) > n:
+            total -= window.popleft()
+        if len(window) == n:
+            out[i] = total / n
+    return out
+
+
 def ema(values, n):
     """指數移動平均，前 n 個有效值用簡單平均起算。"""
     out, k, prev, seed = [NAN] * len(values), 2 / (n + 1), NAN, []

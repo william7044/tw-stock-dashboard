@@ -171,6 +171,7 @@ section.bt .hint { color: var(--ink-2); font-size: 13px; margin: -4px 0 10px; }
 .bt-label { font-weight: 600; color: var(--ink); }
 .bt-rule { color: var(--muted); font-size: 12px; line-height: 1.4; }
 td.bt-na { text-align: left; white-space: normal; }
+#btBody tr.bt-group th { position: static; text-align: left; background: var(--surface-2); color: var(--ink-2); font-size: 12.5px; padding: 5px 10px; }
 .xbar { display: inline-block; position: relative; width: 72px; height: 8px; margin-right: 8px; vertical-align: middle;
   background: linear-gradient(var(--axis), var(--axis)) center / 1px 100% no-repeat; }
 .xfill { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
@@ -279,9 +280,9 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
       <th scope="col">中位數</th>
       <th scope="col">上漲比例</th>
       <th scope="col" title="同一天進場、全部股票的平均報酬">全市場同期</th>
-      <th scope="col" title="訊號股票報酬減掉全市場同期平均，再取平均（容易被少數暴漲股拉高）">超額平均</th>
-      <th scope="col" title="超額報酬的中位數：一半的訊號比這個好、一半比這個差，較能代表一般情況">超額中位數</th>
-      <th scope="col" title="超額報酬大於 0 的比例">贏過全市場</th>
+      <th scope="col" title="訊號股票報酬減掉同期全部股票的平均報酬，再取平均（容易被少數暴漲股拉高）">超額平均</th>
+      <th scope="col" title="訊號股票報酬減掉同期「中位數股票」的報酬，再取中位數。隨機選股約為 0">超額中位數</th>
+      <th scope="col" title="報酬贏過同期中位數股票的比例。隨機選股約為 50%">贏過一半股票</th>
     </tr></thead><tbody id="btBody"></tbody></table></div>
     <div class="pad">
       <details class="bt-notes">
@@ -290,10 +291,12 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
           <li>進場價：法人、融資訊號用訊號日「隔天」收盤（資料收盤後才公布）；月營收用次月 11 日後第一個交易日收盤；高殖利率每月第一個交易日檢查、隔天收盤進場。</li>
           <li>報酬以每日漲跌價差還原計算，已排除除權息造成的跌價；不計手續費、證交稅與滑價。</li>
           <li>每日型訊號只在「條件剛成立」那天算一次，同一段連買不會重複計入。</li>
-          <li>「超額報酬」＝訊號股票報酬 − 同一天進場的全部股票平均報酬；「贏過全市場」＝超額報酬大於 0 的比例。</li>
-          <li>這一年有少數股票幾個月內漲好幾倍，會把「平均」大幅拉高。判斷訊號時請先看「超額中位數」和「贏過全市場」：中位數是負的、比例低於 50%，代表一般情況其實輸給大盤。</li>
+          <li>「超額平均」＝訊號股票報酬 − 同一天進場的全部股票平均報酬，再取平均。這一年有少數股票幾個月漲好幾倍，平均會被大幅拉高。</li>
+          <li>「超額中位數」「贏過一半股票」是和同一天的「中位數股票」比，隨機選股大約是 0% 和 50%，較能代表一般情況。</li>
+          <li>成交量大的股票這一年本身就表現較好。請和「對照組：隨機選股（均量 ≥ 300 張）」那一列比較，贏過它才代表訊號本身有用。</li>
           <li>只有約一年的資料，而且同一天進場的股票走勢高度相關，實際的不確定性比樣本數看起來大。換一段行情，結果可能完全不同。</li>
           <li>大戶加碼、內部人申報沒有官方的歷史資料可以回補，只能從開始執行後逐週、逐日累積。</li>
+          <li>技術面訊號要先累積股價：均線、相對強弱要 60 天，創 52 週新高／新低至少要半年，所以這兩個訊號只有回測期間後半段的樣本。</li>
           <li>這是統計整理，不是投資建議；過去的表現不代表未來。</li>
         </ul>
       </details>
@@ -886,7 +889,12 @@ function renderAll() { renderPresets(); renderTable(); }
     const maxEx = Math.max(0.01, ...rows.filter(([, st]) => isNum(st.excess_median)).map(([, st]) => Math.abs(st.excess_median)));
     const body = document.getElementById("btBody");
     body.replaceChildren();
+    let lastGroup = null;
     for (const [s, st] of rows) {
+      if (s.group && s.group !== lastGroup) {
+        body.append(el("tr", { class: "bt-group" }, el("th", { scope: "rowgroup", colspan: 9, text: s.group })));
+        lastGroup = s.group;
+      }
       const name = el("td", { class: "stick bt-name", title: s.timing },
         el("div", { class: "bt-label", text: s.label }), el("div", { class: "bt-rule", text: `${s.rule}；${s.timing}` }));
       if (!isNum(st.mean)) {

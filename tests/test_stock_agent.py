@@ -222,7 +222,68 @@ class BacktestTests(unittest.TestCase):
         self.assertAlmostEqual(stats["mean"], 5.1, places=1)  # 1.01^5 - 1
         self.assertAlmostEqual(stats["base"], 2.55, places=1)  # 和不漲的 2222 平均
         self.assertAlmostEqual(stats["excess"], 2.55, places=1)
+        self.assertAlmostEqual(stats["excess_median"], 2.55, places=1)  # 兩檔的中位數也是 2.55%
+        self.assertEqual(stats["beat"], 100.0)
         self.assertEqual(stats["n"], 1)
+
+    def test_random_pick_beats_median_half_the_time(self):
+        """右偏分布下，隨機選股贏過「平均」的比例遠低於 50%，但贏過「中位數」剛好一半。"""
+        moves = [k / 100 for k in range(9)] + [1.5]  # 第 25 天：九檔各漲 0%～8%，一檔漲 150%
+        docs = []
+        for i in range(30):
+            rows = {}
+            for k, move in enumerate(moves):
+                close = 100 * (1 + move) if i >= 25 else 100.0
+                rows[f"{1000 + k}"] = [close, 100 * move if i == 25 else 0.0, 1000, 1.0]
+            docs.append({"date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "twse": {"quotes": {"rows": rows}}})
+        panel = backtest.Panel(docs)
+        events = [(code, 21) for code in panel.series]  # 第 21 天每一檔都「進場」，等於隨機全買
+        with mock.patch.object(backtest, "MIN_SAMPLES", 1):
+            stats = backtest.summarize(events, panel, backtest.baselines(panel))["5"]
+        self.assertEqual(stats["beat"], 50.0)  # 一半贏過同期中位數（若對平均 18.6%，只有 1 檔贏）
+        self.assertEqual(stats["excess_median"], 0.0)
+        self.assertAlmostEqual(stats["excess"], 0.0, places=6)  # 平均對平均：超額 0
+
+
+def _trend_docs(days, start=date(2026, 1, 1), spike_day=None):
+    """1111 每天漲 1%、2222 每天跌 1%，量都是 1,000 張（spike_day 那天 1111 爆量 3,000 張）。"""
+    docs = []
+    for i in range(days):
+        up, down = 100 * 1.01 ** i, 100 * 0.99 ** i
+        docs.append({"date": (start + timedelta(days=i)).isoformat(), "twse": {"quotes": {"rows": {
+            "1111": [up, up - 100 * 1.01 ** (i - 1) if i else 0.0, 3000 if i == spike_day else 1000, 1.0],
+            "2222": [down, down - 100 * 0.99 ** (i - 1) if i else 0.0, 1000, 1.0],
+        }}}})
+    return docs
+
+
+class BacktestSignalTests(unittest.TestCase):
+    def test_technical_events_fire_once_and_enter_next_day(self):
+        events = backtest.technical_events(backtest.Panel(_trend_docs(140, spike_day=100)))
+        self.assertIn(("1111", 60), events["bull"])  # 第 59 天才有 60 日均線
+        self.assertIn(("1111", 61), events["rs"])  # 第 60 天才有 60 日漲幅
+        self.assertIn(("1111", 101), events["volup"])
+        self.assertEqual(events["high52"], [("1111", 121)])  # 至少要 120 天歷史
+        self.assertEqual(events["low52"], [("2222", 121)])
+        self.assertEqual(events["macd"], [])  # 單調上漲不會出現「交叉」
+
+    def test_revenue_new_high_and_pe_low_events(self):
+        panel = backtest.Panel(_trend_docs(90))  # 2026-01-01 ~ 2026-03-31
+        with tempfile.TemporaryDirectory() as tmp:
+            store = Store(tmp)
+            months = [f"2025-{m:02d}" for m in range(1, 13)] + ["2026-01"]
+            for k, month in enumerate(months):
+                store.write({"month": month, "rows": {"1111": [100_000 + k, 60.0, 0, 40.0, 0, "", ""]}}, "revenue", f"{month}.json")
+            for k, day in enumerate(["2025-08-01", "2025-09-01", "2025-10-01", "2025-11-01", "2025-12-01", "2026-01-01", "2026-02-01"]):
+                store.write({"date": day, "rows": {"1111": [20.0 - k, 3.0, 1.0]}}, "valuation", "history", f"{day}.json")
+            revenue = backtest.revenue_events(panel, store)
+            valuation = backtest.valuation_events(panel, store)
+        # 2025-12 營收在 1 月 11 日進場、2026-01 營收在 2 月 11 日進場；更早的月份進場日在資料期間之前
+        expected = [("1111", panel.dates.index("2026-01-11")), ("1111", panel.dates.index("2026-02-11"))]
+        self.assertEqual(revenue, {"revenue": expected, "revhigh": expected})
+        jan, feb = panel.dates.index("2026-01-01"), panel.dates.index("2026-02-01")
+        self.assertEqual(valuation["pelow"], [("1111", jan + 1), ("1111", feb + 1)])
+        self.assertEqual(valuation["yield"], [])
 
 
 class IndicatorTests(unittest.TestCase):

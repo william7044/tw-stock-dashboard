@@ -189,18 +189,38 @@ class Updater:
         firsts = {}
         for iso in self.store.day_dates():
             firsts.setdefault(iso[:7], iso)
-        for month, iso in sorted(firsts.items())[-months:]:
+        current = f"{self.now.year:04d}-{self.now.month:02d}"
+        for month in sorted(set(wanted) | {current}):
             if list(self.store.path("valuation", "history").glob(f"{month}-*.json")):
                 continue
-            rows = {}
-            for label, source in (("上市", twse.valuation_on), ("上櫃", tpex.valuation_on)):
-                try:
-                    rows.update(source(date.fromisoformat(iso)) or {})
-                except FetchError as e:
-                    self.warn(f"本益比 {label} {iso}: {e}")
+            iso, rows = self.valuation_snapshot(month, firsts.get(month))
             if rows:
                 self.write({"date": iso, "_fields": ["pe", "yield", "pb"], "rows": rows}, "valuation", "history", f"{iso}.json")
                 print(f"  估值快照 {iso}: {len(rows)} 檔")
+
+    def valuation_snapshot(self, month, known_day):
+        """某個月第一個交易日的估值。沒有每日資料的舊月份，就從 1 號開始往後試到有資料為止。"""
+        if known_day:
+            candidates = [date.fromisoformat(known_day)]
+        else:
+            candidates = [date(int(month[:4]), int(month[5:7]), d) for d in range(1, 11)]
+        for day in candidates:
+            if day.weekday() >= 5 or day.isoformat() in self.closed:
+                continue
+            try:
+                listed = twse.valuation_on(day)
+            except FetchError as e:
+                self.warn(f"本益比 上市 {day}: {e}")
+                return None, None
+            if listed is None:
+                continue  # 休市日
+            rows = dict(listed)
+            try:
+                rows.update(tpex.valuation_on(day) or {})
+            except FetchError as e:
+                self.warn(f"本益比 上櫃 {day}: {e}")
+            return day.isoformat(), rows
+        return None, None
 
     def update_insider(self):
         records = twse.insider() + tpex.insider()
