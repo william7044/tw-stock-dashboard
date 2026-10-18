@@ -273,8 +273,11 @@ class Updater:
             return
         first, today = date.fromisoformat(days[0]), self.now.date()
         meta = self.store.read("meta", "exrights.json", default={})
-        if meta:
-            ranges = [(date.fromisoformat(meta["end"]) - timedelta(days=10), today)]
+        known = max((iso for p in self.store.files("exrights")
+                     for iso in self.store.read("exrights", p.name, default={})), default=None)
+        if meta.get("start") and known:
+            # 只記錄起始日，不記「今天」，沒有新資料時檔案就不會變（排程不會多一次提交）
+            ranges = [(date.fromisoformat(known) - timedelta(days=10), today)]
             if first < date.fromisoformat(meta["start"]):
                 ranges.append((first, date.fromisoformat(meta["start"])))
         else:
@@ -295,8 +298,7 @@ class Updater:
                     doc.setdefault(iso, {}).update(refs)
             if self.write(doc, "exrights", f"{year}.json"):
                 print(f"  除權息參考價 {year}: {sum(len(v) for v in doc.values())} 筆")
-        start = min([first.isoformat()] + ([meta["start"]] if meta else []))
-        self.write({"start": start, "end": today.isoformat()}, "meta", "exrights.json")
+        self.write({"start": min(first.isoformat(), meta.get("start", first.isoformat()))}, "meta", "exrights.json")
 
     def update_benchmarks(self):
         """對照組 ETF 的每日收盤（每個月一次請求；本月每次都重抓）。"""
