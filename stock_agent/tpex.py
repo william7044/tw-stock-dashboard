@@ -180,6 +180,23 @@ def valuation():
     return day, rows
 
 
+def exrights(start, end):
+    """除權除息計算結果表：{日期: {代號: 除權息參考價}}。"""
+    data = fetch_json(f"{WWW}/bulletin/exDailyQ?startDate={start:%Y/%m/%d}&endDate={end:%Y/%m/%d}&id=&response=json")
+    if str(data.get("stat", "")).lower() != "ok":
+        raise FetchError(f"TPEx exDailyQ: stat={data.get('stat')!r}")
+    tables = data.get("tables") or []
+    if not tables or not tables[0].get("data"):
+        return {}
+    i_day, i_code, i_ref = _cols(tables[0]["fields"], "除權息日期", "代號", "除權息參考價")
+    out = {}
+    for row in tables[0]["data"]:
+        ref = num(row[i_ref])
+        if ref:
+            out.setdefault(roc_to_iso(row[i_day]), {})[clean(row[i_code])] = ref
+    return out
+
+
 def valuation_on(day):
     """指定日期的本益比、殖利率、淨值比（回測用的每月快照）。"""
     table = _www("afterTrading/peQryDate", day)

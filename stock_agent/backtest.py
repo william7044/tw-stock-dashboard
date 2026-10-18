@@ -31,6 +31,7 @@ SIGNALS = [
     # 對照組：不看任何訊號，每天、每一檔都「買」。訊號至少要贏過同樣流動性的對照組才算有用。
     {"id": "ref_all", "group": "對照組", "label": "隨機選股（全部）", "rule": "每天每一檔都買，代表市場的一般情況", "timing": "每天收盤進場"},
     {"id": "ref_liquid", "group": "對照組", "label": "隨機選股（均量 ≥ 300 張）", "rule": "每天每一檔 5 日均量 ≥ 300 張的股票都買", "timing": "每天收盤進場"},
+    {"id": "ref_0050", "group": "對照組", "label": "0050 每天定期定額", "rule": "每個交易日收盤買進固定金額的元大台灣 50（含配息），代表「直接買大盤」", "timing": "每天收盤進場"},
     {"id": "foreign", "group": "籌碼面", "label": "外資連買", "rule": "外資連續買超 ≥ 5 天、5 日均量 ≥ 500 張", "timing": NEXT_DAY},
     {"id": "trust", "group": "籌碼面", "label": "投信連買", "rule": "投信連續買超 ≥ 3 天、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
     {"id": "trustcap", "group": "籌碼面", "label": "投信認養", "rule": "投信 5 日買超佔股本 ≥ 0.5%", "timing": NEXT_DAY},
@@ -59,8 +60,12 @@ def nan_array(length):
     return array("d", [NAN]) * length
 
 
-def adjusted_index(close, change):
-    """用每天的漲跌價差串成還原指數。漲跌價差是相對「參考價」，除權息日的參考價已扣掉股利。"""
+def adjusted_index(close, change, reference=None):
+    """用每天的漲跌串成還原指數（含配息的報酬）。
+
+    平常日子：漲跌價差是相對前一天收盤。除權息日：交易所的漲跌價差只標「X」，
+    改用除權除息計算結果表的「除權息參考價」（reference）算當天真正的漲跌。
+    """
     out = nan_array(len(close))
     level = prev = NAN
     for i, c in enumerate(close):
@@ -68,8 +73,10 @@ def adjusted_index(close, change):
             if isnan(level):
                 level = 1.0
             else:
-                ch = change[i]
-                ref = c - ch if not isnan(ch) else NAN
+                ref = reference[i] if reference is not None else NAN
+                if not ref > 0:
+                    ch = change[i]
+                    ref = c - ch if not isnan(ch) else NAN
                 ratio = c / ref if ref > 0 else (c / prev if prev > 0 else 1.0)
                 if 1 / 3 < ratio < 3:  # 停牌很久等資料異常的跳動不計入
                     level *= ratio
@@ -102,16 +109,29 @@ def transitions(condition, start):
     return [i for i in range(max(start, 1), len(condition)) if condition[i] and not condition[i - 1]]
 
 
+def load_exrights(store):
+    """除權息參考價：{日期: {代號: 參考價}}。"""
+    out = {}
+    for path in store.files("exrights"):
+        out.update(store.read("exrights", path.name, default={}))
+    return out
+
+
 class Panel:
-    """每檔股票每天的收盤、漲跌、成交量、外資、投信、融資餘額（array，缺值為 NaN）。"""
+    """每檔股票每天的收盤、漲跌、成交量、外資、投信、融資餘額（array，缺值為 NaN）。
 
-    FIELDS = ("close", "chg", "vol", "foreign", "trust", "margin")
+    對照用的 ETF（例如 0050）放在 bench，不會混進全市場平均或任何訊號。
+    """
 
-    def __init__(self, docs):
+    FIELDS = ("close", "chg", "vol", "foreign", "trust", "margin", "ref")
+
+    def __init__(self, docs, exrights=None):
         self.dates = [d["date"] for d in docs]
         self.T = T = len(docs)
-        self.series = {}
+        self.series, self.bench, self.bench_index = {}, {}, {}
+        self.exrights = exrights or {}
         for i, doc in enumerate(docs):
+            day_refs = self.exrights.get(doc["date"], {})
             for market in MARKETS:
                 part = doc.get(market, {})
                 quotes = (part.get("quotes") or {}).get("rows", {})
@@ -129,7 +149,24 @@ class Panel:
                         s["foreign"][i], s["trust"][i] = row[0] or 0, row[1] or 0
                     if margin is not None and code in margin:
                         s["margin"][i] = margin[code][0]
-        self.index = {code: adjusted_index(s["close"], s["chg"]) for code, s in self.series.items()}
+                    if code in day_refs:
+                        s["ref"][i] = day_refs[code]
+        self.index = {code: adjusted_index(s["close"], s["chg"], s["ref"]) for code, s in self.series.items()}
+
+    def add_benchmark(self, code, rows):
+        """加入對照用的 ETF：rows = {日期: [收盤, 漲跌]}，依同樣方式還原配息。"""
+        s = {k: nan_array(self.T) for k in self.FIELDS}
+        for i, iso in enumerate(self.dates):
+            row = rows.get(iso)
+            if row and row[0] is not None:
+                s["close"][i] = row[0]
+                if row[1] is not None:
+                    s["chg"][i] = row[1]
+            ref = self.exrights.get(iso, {}).get(code)
+            if ref:
+                s["ref"][i] = ref
+        self.bench[code] = s
+        self.bench_index[code] = adjusted_index(s["close"], s["chg"], s["ref"])
 
     def first_after(self, iso, inclusive=False):
         """iso 之後（或當天）第一個交易日的索引；沒有就回傳 None。"""
@@ -138,6 +175,8 @@ class Panel:
 
     def forward(self, code, entry, horizon):
         idx = self.index.get(code)
+        if idx is None:
+            idx = self.bench_index.get(code)
         if idx is None or entry + horizon >= self.T:
             return None
         a, b = idx[entry], idx[entry + horizon]
@@ -147,6 +186,8 @@ class Panel:
 
     def tradable(self, code, i):
         s = self.series.get(code)
+        if s is None:
+            s = self.bench.get(code)
         return s is not None and i is not None and i < self.T and not isnan(s["close"][i])
 
 
@@ -375,7 +416,8 @@ def run(store=None, docs=None):
     docs = [d for d in docs[-MAX_DAYS:] if (d.get("twse", {}).get("quotes") or {}).get("rows")]
     if len(docs) < WARMUP + max(HORIZONS) // 2:
         return {"days": len(docs), "signals": [], "message": "歷史資料不足，請先執行 py run.py --backfill-days 260 --history-months 25"}
-    panel = Panel(docs)
+    panel = Panel(docs, load_exrights(store))
+    panel.add_benchmark("0050", store.read("benchmarks", "0050.json", default={}).get("rows", {}))
     shares = {code: info.get("shares") for code, info in store.read("meta", "companies.json", default={}).get("rows", {}).items()}
     base = baselines(panel)
 
@@ -393,6 +435,7 @@ def run(store=None, docs=None):
                 events["ref_all"].append((code, e))
                 if vol5[e - 1] >= 300:
                     events["ref_liquid"].append((code, e))
+    events["ref_0050"] = [("0050", e) for e in range(WARMUP + 1, panel.T) if panel.tradable("0050", e)]
 
     all_entries = [(None, e) for e in range(WARMUP + 1, panel.T)]
     overall = {}

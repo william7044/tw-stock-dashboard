@@ -5,7 +5,7 @@
 from datetime import date, timedelta
 
 from . import indicators as ind
-from .backtest import Panel
+from .backtest import Panel, load_exrights
 from .store import Store
 
 MARKETS = ("twse", "tpex")
@@ -245,7 +245,7 @@ def build_payload(store=None, all_docs=None):
         n, lots_sum = ins_by_code.get(rec["code"], (0, 0))
         ins_by_code[rec["code"]] = (n + 1, lots_sum + (rec["lots"] or 0))
 
-    tech, breadth = technicals(Panel(all_docs[-LONG_WINDOW:]), set(market_of))
+    tech, breadth = technicals(Panel(all_docs[-LONG_WINDOW:], load_exrights(store)), set(market_of))
     rev_extra = revenue_metrics(store)
     pe_pct = pe_position(store, valuation)
 

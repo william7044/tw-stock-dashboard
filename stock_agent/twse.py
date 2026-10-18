@@ -161,6 +161,47 @@ def valuation():
     return day, rows
 
 
+def stock_day(code, month):
+    """單一證券某個月（'2026-07'）的每日收盤：{日期: [收盤, 漲跌]}。
+
+    除權息日的漲跌價差會標成「X0.00」，那天的漲跌記成 None，改用除權息參考價計算。
+    """
+    first = f"{month.replace('-', '')}01"
+    data = fetch_json(f"{WWW}/afterTrading/STOCK_DAY?date={first}&stockNo={code}&response=json")
+    stat = str(data.get("stat", ""))
+    if NO_DATA in stat:
+        return {}
+    if stat.upper() != "OK":
+        raise FetchError(f"TWSE STOCK_DAY {code} {month}: stat={stat!r}")
+    f = data["fields"]
+    i_day, i_close, i_chg = f.index("日期"), f.index("收盤價"), f.index("漲跌價差")
+    out = {}
+    for row in data.get("data", []):
+        iso = roc_to_iso(row[i_day])
+        if iso.startswith(month):
+            change = None if "X" in str(row[i_chg]) else r2(num(row[i_chg]))
+            out[iso] = [num(row[i_close]), change]
+    return out
+
+
+def exrights(start, end):
+    """除權除息計算結果表：{日期: {代號: 除權息參考價}}（含 ETF）。"""
+    data = fetch_json(f"{WWW}/exRight/TWT49U?startDate={start:%Y%m%d}&endDate={end:%Y%m%d}&response=json")
+    stat = str(data.get("stat", ""))
+    if NO_DATA in stat:
+        return {}
+    if stat.upper() != "OK":
+        raise FetchError(f"TWSE TWT49U: stat={stat!r}")
+    f = data["fields"]
+    i_day, i_code, i_ref = f.index("資料日期"), f.index("股票代號"), f.index("除權息參考價")
+    out = {}
+    for row in data.get("data", []):
+        ref = num(row[i_ref])
+        if ref:
+            out.setdefault(roc_to_iso(row[i_day]), {})[clean(row[i_code])] = ref
+    return out
+
+
 def valuation_on(day):
     """指定日期的本益比、殖利率、淨值比（回測用的每月快照）。"""
     data = _www("afterTrading/BWIBBU_d", day, date=day.strftime("%Y%m%d"), selectType="ALL")

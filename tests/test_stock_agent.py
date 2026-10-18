@@ -65,6 +65,23 @@ class TwseTests(unittest.TestCase):
         self.assertEqual(payload["rows"], {"2330": [2420.0, -20.0, 43047, 104583.1]})
         self.assertEqual(payload["index"], [47111.26, 141.39])
 
+    def test_stock_day_marks_ex_dividend_change_unknown(self):
+        data = {"stat": "OK", "fields": ["日期", "成交股數", "成交金額", "開盤價", "最高價", "最低價", "收盤價", "漲跌價差", "成交筆數", "註記"],
+                "data": [["115/07/20", "1", "1", "1", "1", "1", "99.20", "-0.80", "1", ""],
+                         ["115/07/21", "1", "1", "1", "1", "1", "102.50", "X0.00", "1", ""]]}
+        with mock.patch.object(twse, "fetch_json", return_value=data):
+            self.assertEqual(twse.stock_day("0050", "2026-07"), {"2026-07-20": [99.2, -0.8], "2026-07-21": [102.5, None]})
+
+    def test_exrights_reference_prices(self):
+        tw = {"stat": "OK", "fields": ["資料日期", "股票代號", "股票名稱", "除權息前收盤價", "除權息參考價"],
+              "data": [["115年07月21日", "0050", "元大台灣50", "99.20", "98.60"]]}
+        with mock.patch.object(twse, "fetch_json", return_value=tw):
+            self.assertEqual(twse.exrights(date(2026, 7, 1), date(2026, 7, 31)), {"2026-07-21": {"0050": 98.6}})
+        tp = {"stat": "ok", "tables": [{"fields": ["除權息日期", "代號", "名稱", "除權息前收盤價", "除權息參考價"],
+                                         "data": [["114/10/01", "3289", "宜特              ", "120.00", "117.22"]]}]}
+        with mock.patch.object(tpex, "fetch_json", return_value=tp):
+            self.assertEqual(tpex.exrights(date(2025, 10, 1), date(2025, 10, 31)), {"2025-10-01": {"3289": 117.22}})
+
     def test_no_data_and_wrong_date(self):
         with mock.patch.object(twse, "fetch_json", return_value={"stat": "很抱歉，沒有符合條件的資料!"}):
             self.assertIsNone(twse.daily_quotes(DAY))
@@ -197,6 +214,24 @@ class BacktestTests(unittest.TestCase):
         self.assertAlmostEqual(idx[2], 1.02 * 95 / 97)
         self.assertAlmostEqual(idx[3], idx[2])  # 沒成交的日子沿用
         self.assertAlmostEqual(idx[4], idx[2] * 96 / 95)
+
+    def test_reference_price_gives_true_move_on_ex_dividend_day(self):
+        # 交易所在除息日只標「X0.00」（漲跌記成 0）；有參考價 98 時，當天真正是 104/98
+        idx = backtest.adjusted_index(array("d", [100, 102, 104]), array("d", [self.NAN, 2, 0.0]),
+                                      array("d", [self.NAN, self.NAN, 98]))
+        self.assertAlmostEqual(idx[2], 1.02 * 104 / 98)
+
+    def test_benchmark_is_kept_out_of_market_baseline(self):
+        docs = _trend_docs(40)
+        panel = backtest.Panel(docs)
+        before = backtest.baselines(panel)
+        rows = {d["date"]: [100 * 1.02 ** i, None if i == 30 else 100 * 1.02 ** i - 100 * 1.02 ** (i - 1)]
+                for i, d in enumerate(docs)}
+        panel.exrights = {docs[30]["date"]: {"0050": 100 * 1.02 ** 29}}  # 第 30 天除息但參考價 = 前收（沒配息）
+        panel.add_benchmark("0050", rows)
+        self.assertEqual(backtest.baselines(panel), before)
+        self.assertTrue(panel.tradable("0050", 25))
+        self.assertAlmostEqual(panel.forward("0050", 25, 10), 1.02 ** 10 - 1)
 
     def test_streaks_and_transitions(self):
         self.assertEqual(backtest.streaks([1, 2, 0, -1, -3, self.NAN, -2]), [1, 2, 0, -1, -2, -2, -3])

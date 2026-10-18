@@ -12,6 +12,7 @@ from .net import FetchError
 from .store import Store
 
 TAIPEI = timezone(timedelta(hours=8))
+BENCHMARKS = ("0050",)  # 回測對照組用的 ETF（每天定期定額）
 CATCH_UP_DAYS = 7  # 每次都檢查最近 7 個交易日有沒有缺資料（例如前一天排程沒跑成功）
 DATA_READY_HOUR = 15  # 台灣時間 15:00 前不抓當天，收盤資料還沒公布
 
@@ -265,6 +266,57 @@ class Updater:
             if changed:
                 self.save_day(doc)
 
+    def update_exrights(self):
+        """除權除息參考價（上市＋上櫃）。還原股價靠它算出除權息當天真正的漲跌。"""
+        days = self.store.day_dates()
+        if not days:
+            return
+        first, today = date.fromisoformat(days[0]), self.now.date()
+        meta = self.store.read("meta", "exrights.json", default={})
+        if meta:
+            ranges = [(date.fromisoformat(meta["end"]) - timedelta(days=10), today)]
+            if first < date.fromisoformat(meta["start"]):
+                ranges.append((first, date.fromisoformat(meta["start"])))
+        else:
+            ranges = [(first, today)]
+        merged = {}
+        for start, end in ranges:
+            for label, source in (("上市", twse.exrights), ("上櫃", tpex.exrights)):
+                try:
+                    for iso, refs in source(start, end).items():
+                        merged.setdefault(iso, {}).update(refs)
+                except FetchError as e:
+                    self.warn(f"除權息參考價 {label}: {e}")
+                    return  # 這次不更新涵蓋範圍，下次重抓
+        for year in sorted({iso[:4] for iso in merged}):
+            doc = self.store.read("exrights", f"{year}.json", default={})
+            for iso, refs in merged.items():
+                if iso.startswith(year):
+                    doc.setdefault(iso, {}).update(refs)
+            if self.write(doc, "exrights", f"{year}.json"):
+                print(f"  除權息參考價 {year}: {sum(len(v) for v in doc.values())} 筆")
+        start = min([first.isoformat()] + ([meta["start"]] if meta else []))
+        self.write({"start": start, "end": today.isoformat()}, "meta", "exrights.json")
+
+    def update_benchmarks(self):
+        """對照組 ETF 的每日收盤（每個月一次請求；本月每次都重抓）。"""
+        months = {}
+        for iso in self.store.day_dates():
+            months.setdefault(iso[:7], set()).add(iso)
+        current = f"{self.now.year:04d}-{self.now.month:02d}"
+        for code in BENCHMARKS:
+            doc = self.store.read("benchmarks", f"{code}.json",
+                                  default={"code": code, "_fields": ["close", "change"], "rows": {}})
+            for month in sorted(months):
+                if month != current and months[month] <= set(doc["rows"]):
+                    continue
+                try:
+                    doc["rows"].update(twse.stock_day(code, month))
+                except FetchError as e:
+                    self.warn(f"對照組 {code} {month}: {e}")
+            if self.write(doc, "benchmarks", f"{code}.json"):
+                print(f"  對照組 {code}: {len(doc['rows'])} 天")
+
     def update_snapshots(self):
         print("更新快照型資料")
         self.snapshot("月營收", self.update_revenue)
@@ -273,6 +325,8 @@ class Updater:
         self.snapshot("內部人申報", self.update_insider)
         self.snapshot("集保股權分散", self.update_tdcc)
         self.snapshot("櫃買指數/法人金額", self.update_tpex_extras)
+        self.snapshot("除權息參考價", self.update_exrights)
+        self.snapshot("對照組 ETF", self.update_benchmarks)
 
 
 def run(backfill_days=0, history_months=0, store=None, now=None):
