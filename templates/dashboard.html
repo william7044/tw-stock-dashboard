@@ -709,9 +709,14 @@ function makeProfileChart(host, cfg) {
       lab.textContent = compact(v);
       svg.append(lab);
     }
-    for (const i of [0, Math.floor((n - 1) / 2), n - 1].filter((v, k, a) => a.indexOf(v) === k)) {
+    // 日期刻度：寬的時候 5 個、窄的時候 3 個；圖跨年，第一個和換年的刻度加上年份
+    const tickCount = plotW < 440 ? 3 : 5;
+    let tickYear = null;
+    for (const i of [...new Set(Array.from({ length: tickCount }, (_, k) => Math.round(k * (n - 1) / (tickCount - 1))))]) {
+      const iso = dates[i] || "", year = iso.slice(0, 4);
       const lab = svgEl("text", { x: i === 0 ? padL : i === n - 1 ? plotR : x(i), y: H - 5, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "tick" });
-      lab.textContent = md(dates[i]);
+      lab.textContent = (year !== tickYear ? year + "/" : "") + md(iso);
+      tickYear = year;
       svg.append(lab);
     }
 
@@ -906,7 +911,7 @@ function vpLegend() {  // 圖例的鍵和圖上的記號一樣畫法；切換深
       [marker("S", "--down"), "賣出訊號"],
       [key(["rect", { x: 1, y: 1, width: 15, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.9 }],
         ["rect", { x: 1, y: 5.5, width: 10, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.5 }],
-        ["rect", { x: 1, y: 10, width: 5, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.22 }]), "右側：各價位成交量（深＝POC、價值區）"],
+        ["rect", { x: 1, y: 10, width: 5, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.22 }]), `右側：前 ${VP.window} 日各價位成交量（深＝POC、價值區）`],
     ].map(([k, label]) => el("li", {}, k, label)));
   };
   CHARTS.add(legend);
@@ -1466,7 +1471,7 @@ function openDetail(code) {
   };
   const hPrice = card("收盤價", `近 ${S.dates.length} 個交易日`, true);
   const vpc = VP.charts[code];
-  const hVP = vpc && vpc.h ? card("成交量分布與買賣點", `近 ${VP.dates.length} 個交易日・還原股價`, true) : null;
+  const hVP = vpc && vpc.h ? card("成交量分布與買賣點", `${VP.dates[0]} ～ ${VP.dates[VP.dates.length - 1]}（${VP.dates.length} 個交易日）・還原股價`, true) : null;
   const hF = card("外資買賣超", "張／日，紅＝買超、綠＝賣超");
   const hT = card("投信買賣超", "張／日，紅＝買超、綠＝賣超");
   if (!hVP) {
@@ -1515,7 +1520,8 @@ function openDetail(code) {
     const cardEl = hVP.parentElement;
     cardEl.append(vpLegend());
     cardEl.append(el("p", { class: "vp-note", text:
-      `每天的價值區、POC 都只用前 ${VP.window} 個交易日的成交量計算，B／S 是依固定規則自動標註，不會用到當天以後的資料；` +
+      `每天的價值區、POC 都只用前 ${VP.window} 個交易日的成交量計算，所以資料還不滿 ${VP.window} 天的前段只有股價、沒有價值區和訊號；` +
+      "B／S 是依固定規則自動標註，不會用到當天以後的資料；" +
       "每天的量放在當天均價（成交值 ÷ 成交量），沒有盤中逐筆資料。這是統計整理，不是投資建議。" }));
     if (vpc.tr.length) {
       cardEl.append(el("details", { open: true },
