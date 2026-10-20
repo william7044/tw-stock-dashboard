@@ -15,6 +15,7 @@ from datetime import date
 from statistics import mean, median
 
 from . import indicators as ind
+from . import volume_profile
 from .store import Store
 
 HORIZONS = (5, 20, 60)
@@ -27,10 +28,12 @@ NAN = float("nan")
 NEXT_DAY = "條件剛成立的隔天收盤進場"
 MONTHLY_REVENUE = "次月 11 日後第一個交易日收盤進場，每月計一次"
 MONTHLY_CHECK = "每月第一個交易日檢查，隔天收盤進場"
+VP_TIMING = "B 訊號的隔天收盤進場；持有中（還沒出現 S）不會重複出現 B"
 SIGNALS = [
     # 對照組：不看任何訊號，每天、每一檔都「買」。訊號至少要贏過同樣流動性的對照組才算有用。
     {"id": "ref_all", "group": "對照組", "label": "隨機選股（全部）", "rule": "每天每一檔都買，代表市場的一般情況", "timing": "每天收盤進場"},
     {"id": "ref_liquid", "group": "對照組", "label": "隨機選股（均量 ≥ 300 張）", "rule": "每天每一檔 5 日均量 ≥ 300 張的股票都買", "timing": "每天收盤進場"},
+    {"id": "ref_vp", "group": "對照組", "label": "隨機選股（成交值 ≥ 1 億）", "rule": "每天每一檔 20 日平均成交值 ≥ 1 億元的股票都買（成交量分布訊號只看這些股票）", "timing": "每天收盤進場"},
     {"id": "ref_0050", "group": "對照組", "label": "0050 每天定期定額", "rule": "每個交易日收盤買進固定金額的元大台灣 50（含配息），代表「直接買大盤」", "timing": "每天收盤進場"},
     {"id": "foreign", "group": "籌碼面", "label": "外資連買", "rule": "外資連續買超 ≥ 5 天、5 日均量 ≥ 500 張", "timing": NEXT_DAY},
     {"id": "trust", "group": "籌碼面", "label": "投信連買", "rule": "投信連續買超 ≥ 3 天、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
@@ -49,6 +52,9 @@ SIGNALS = [
     {"id": "volup", "group": "技術面", "label": "爆量上漲", "rule": "成交量 ≥ 前 20 日均量 2 倍、≥ 500 張且收漲", "timing": NEXT_DAY},
     {"id": "macd", "group": "技術面", "label": "MACD 黃金交叉", "rule": "DIF 由下往上穿過 DEA、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
     {"id": "rsilow", "group": "技術面", "label": "RSI 超賣", "rule": "14 日 RSI ≤ 30、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
+    {"id": "vp_rng", "group": "成交量分布", "label": "區間低接（B）", "rule": "60 日高低差 ≤ 25%、60 日漲跌在 ±10% 內，前 120 日價值區落在這個箱子裡，收盤跌到價值區下緣", "timing": VP_TIMING},
+    {"id": "vp_reb", "group": "成交量分布", "label": "跌深反彈（B）", "rule": "距 120 日高點跌 ≥ 20%、POC 與價值區都在上方，收盤創 10 日新高且離 20 日低點 ≥ 5%", "timing": VP_TIMING},
+    {"id": "vp_brk", "group": "成交量分布", "label": "整理突破（B）", "rule": "60 日高低差 ≤ 25%，收盤帶量（≥ 前 20 日均量 1.5 倍）站上箱頂與價值區上緣、上方套牢量 ≤ 15%", "timing": VP_TIMING},
 ]
 
 
@@ -118,12 +124,12 @@ def load_exrights(store):
 
 
 class Panel:
-    """每檔股票每天的收盤、漲跌、成交量、外資、投信、融資餘額（array，缺值為 NaN）。
+    """每檔股票每天的收盤、漲跌、成交量、成交值、外資、投信、融資餘額（array，缺值為 NaN）。
 
     對照用的 ETF（例如 0050）放在 bench，不會混進全市場平均或任何訊號。
     """
 
-    FIELDS = ("close", "chg", "vol", "foreign", "trust", "margin", "ref")
+    FIELDS = ("close", "chg", "vol", "value", "foreign", "trust", "margin", "ref")
 
     def __init__(self, docs, exrights=None):
         self.dates = [d["date"] for d in docs]
@@ -141,7 +147,7 @@ class Panel:
                     s = self.series.get(code)
                     if s is None:
                         s = self.series[code] = {k: nan_array(T) for k in self.FIELDS}
-                    for key, value in zip(("close", "chg", "vol"), q):
+                    for key, value in zip(("close", "chg", "vol", "value"), q):
                         if value is not None:
                             s[key][i] = value
                     if insti is not None:  # 當天有法人資料：沒出現在名單上 = 0
@@ -409,6 +415,40 @@ def summarize(events, panel, base):
     return stats
 
 
+def trade_stats(trades, panel):
+    """成交量分布的 B→S 交易（隔天收盤進出）：勝率、報酬、持有天數，以及和同一段期間的中位數股票比較。
+
+    每筆交易的持有期間都不一樣，所以「同期」是用同一個進場日、同一個出場日的全部股票報酬中位數。
+    """
+    medians, out = {}, {}
+    for kind in volume_profile.KINDS:
+        rets, vs_median, days = [], [], []
+        for code, k, entry, exit_ in trades:
+            r = panel.forward(code, entry, exit_ - entry) if k == kind else None
+            if r is None:  # 別種訊號，或缺價格
+                continue
+            if (entry, exit_) not in medians:
+                pool = [v for v in (panel.forward(c, entry, exit_ - entry) for c in panel.index) if v is not None]
+                medians[(entry, exit_)] = median(pool) if pool else None
+            m = medians[(entry, exit_)]
+            if m is None:
+                continue
+            rets.append(r)
+            vs_median.append(r - m)
+            days.append(exit_ - entry)
+        n = len(rets)
+        out[kind] = {"n": n} if n < MIN_SAMPLES else {
+            "n": n,
+            "win": pct(sum(r > 0 for r in rets) / n),
+            "mean": pct(mean(rets)),
+            "median": pct(median(rets)),
+            "days": median(days),
+            "excess_median": pct(median(vs_median)),
+            "beat": pct(sum(x > 0 for x in vs_median) / n),
+        }
+    return out
+
+
 def run(store=None, docs=None):
     store = store or Store()
     if docs is None:
@@ -427,14 +467,19 @@ def run(store=None, docs=None):
     events.update(valuation_events(panel, store))
     events["big"] = tdcc_events(panel, store)
     events["insider"] = insider_events(panel, store)
-    events["ref_all"], events["ref_liquid"] = [], []
+    vp_events, vp_trades = volume_profile.events(panel)
+    events.update(vp_events)
+    events["ref_all"], events["ref_liquid"], events["ref_vp"] = [], [], []
     for code, s in panel.series.items():
         vol5 = rolling(s["vol"], 5, "mean")
+        value20 = rolling(s["value"], 20, "mean")
         for e in range(WARMUP + 1, panel.T):
             if panel.tradable(code, e):
                 events["ref_all"].append((code, e))
                 if vol5[e - 1] >= 300:
                     events["ref_liquid"].append((code, e))
+                if value20[e - 1] >= volume_profile.LIQUID:
+                    events["ref_vp"].append((code, e))
     events["ref_0050"] = [("0050", e) for e in range(WARMUP + 1, panel.T) if panel.tradable("0050", e)]
 
     all_entries = [(None, e) for e in range(WARMUP + 1, panel.T)]
@@ -457,6 +502,7 @@ def run(store=None, docs=None):
             {**sig, "events": len(events[sig["id"]]), "stats": summarize(events[sig["id"]], panel, base)}
             for sig in SIGNALS
         ],
+        "vp_trades": trade_stats(vp_trades, panel),
     }
 
 
@@ -481,6 +527,15 @@ def main():
                 print(f"  {h:>2} 日：平均 {st['mean']:+.2f}%  中位數 {st['median']:+.2f}%  上漲 {st['win']:.0f}%  "
                       f"超額平均 {st['excess']:+.2f}%  超額中位數 {st['excess_median']:+.2f}%  "
                       f"贏過全市場 {st['beat']:.0f}%  (n={st['n']}, {st['dates']} 個進場日)")
+    labels = {sig["id"]: sig["label"] for sig in SIGNALS}
+    print("\n成交量分布：照 B 進場、S 出場（隔天收盤進出）")
+    for kind, st in result["vp_trades"].items():
+        if "win" not in st:
+            print(f"  {labels['vp_' + kind]}：樣本不足（{st['n']} 筆）")
+        else:
+            print(f"  {labels['vp_' + kind]}：{st['n']} 筆  勝率 {st['win']:.0f}%  報酬中位數 {st['median']:+.2f}%  "
+                  f"平均 {st['mean']:+.2f}%  持有 {st['days']:.0f} 天（中位數）  "
+                  f"超額中位數 {st['excess_median']:+.2f}%  贏過同期中位數股票 {st['beat']:.0f}%")
 
 
 if __name__ == "__main__":

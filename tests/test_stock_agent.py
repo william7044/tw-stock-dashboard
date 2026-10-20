@@ -8,7 +8,7 @@ from array import array
 from datetime import date, datetime, timedelta
 from unittest import mock
 
-from stock_agent import analyze, backtest, indicators, mops, parse, tdcc, tpex, twse, update
+from stock_agent import analyze, backtest, indicators, mops, parse, tdcc, tpex, twse, update, volume_profile
 from stock_agent.net import FetchError
 from stock_agent.store import Store
 
@@ -361,6 +361,94 @@ class IndicatorTests(unittest.TestCase):
                 store.write({"month": f"2026-{m:02d}", "rows": {"1111": [100 + m, 5.0 if m > 9 else -1.0, 0, 0, 0, "", ""]}},
                             "revenue", f"2026-{m:02d}.json")
             self.assertEqual(analyze.revenue_metrics(store)["1111"], (1, 3))
+
+
+def _grid(k):
+    """價格格子 k 的正中間（每格 1%），測試用的收盤價都放在格子中間，才不會因為浮點誤差掉到隔壁格。"""
+    return 1.01 ** (k + 0.5)
+
+
+A, B, C, D, E = 460, 461, 462, 463, 464  # 約 99.2 ～ 103.2 元的五個相鄰格子
+BOX = [C, D, C, E, C, B, D, C, B, A]  # 每 10 天：C 4 天、D 2 天、B 2 天、A 1 天、E 1 天 → 價值區是 B～D
+
+
+def _vp_series(bins, vols):
+    """格子序列 → scan() 的輸入（收盤、成交量張、成交值百萬元、還原指數）。均價 = 收盤。"""
+    close = [_grid(k) for k in bins]
+    value = [v * c / 1000 for v, c in zip(vols, close)]
+    return close, list(vols), value, close
+
+
+class VolumeProfileTests(unittest.TestCase):
+    def test_value_area_adds_the_heavier_side_until_70_percent(self):
+        bins = {10: 5, 11: 20, 12: 40, 13: 12, 14: 23}
+        # POC 12（40%）→ 下面 20 比上面 12 多，加 11（60%）→ 上面 12 比下面 5 多，加 13（72%）
+        self.assertEqual(volume_profile.value_area(bins), (12, 11, 13, 100))
+        self.assertEqual(volume_profile.value_area({5: 1, 6: 1, 7: 1})[0], 6)  # 一樣多時取中間
+
+    def test_vwap_from_traded_value_with_dividend_adjustment(self):
+        nan = float("nan")
+        # 成交值（百萬元）× 1000 ÷ 成交量（張）= 均價；第二天之前除息，還原係數 0.96
+        out = volume_profile.adjusted_vwap([100.0, 95.0, nan], [1000, 2000, 0], [101.0, 190.0, nan], [96.0, 95.0, nan])
+        self.assertAlmostEqual(out[0], 101 * 0.96)
+        self.assertAlmostEqual(out[1], 95.0)
+        self.assertTrue(volume_profile.isnan(out[2]))
+        self.assertEqual(volume_profile.adjusted_vwap([100.0], [1000], [500.0], [100.0]), [100.0])  # 均價離譜時用收盤
+
+    def test_levels_use_only_the_previous_window(self):
+        prices = [_grid(C)] * 3 + [_grid(E)] * 4
+        levels, above, last_bins = volume_profile.rolling_levels(prices, [10] * 7, prices, window=3, min_days=3)
+        self.assertIsNone(levels[2])  # 前面只有 2 天
+        self.assertEqual(levels[3], (C, C, C))  # 當天（E）的量還沒算進去
+        self.assertEqual(above[3], 0.0)
+        self.assertEqual(levels[6], (E, E, E))  # 3 天前的 C 已經移出視窗
+        self.assertEqual(last_bins, {E: 30})
+
+    def test_range_buys_at_value_area_low_and_sells_at_high(self):
+        r = volume_profile.scan(*_vp_series(BOX * 13, [3000] * 130))
+        marks = [(t, side, kind) for t, side, kind, *_ in r["marks"]]
+        # 第 100 天起才有完整分布；第 105 天收在 B（價值區下緣那一格）→ B，第 113 天收在 E（超過上緣）→ S
+        self.assertEqual(marks[:4], [(105, "B", "rng"), (113, "S", "tgt"), (115, "B", "rng"), (123, "S", "tgt")])
+        _, _, _, target, stop = r["marks"][0]
+        self.assertAlmostEqual(target, volume_profile.bin_price(D, 1))
+        self.assertAlmostEqual(stop, volume_profile.bin_price(B) * 0.95)
+        self.assertEqual(r["flags"] & volume_profile.RANGE, volume_profile.RANGE)
+
+    def test_breakout_buys_on_volume_and_sells_when_back_in_value_area(self):
+        bins = BOX * 15 + [470, 471, 472, 469, C]  # 第 150 天帶量跳到箱子上方，第 154 天跌回價值區
+        vols = [900] * 150 + [5000, 900, 900, 900, 900]  # 整理期間成交值不到 1 億，不會出現區間訊號
+        r = volume_profile.scan(*_vp_series(bins, vols))
+        self.assertEqual([(t, side, kind) for t, side, kind, *_ in r["marks"]], [(150, "B", "brk"), (154, "S", "fail")])
+        self.assertAlmostEqual(r["marks"][0][4], volume_profile.bin_price(D, 1))  # 出場價 = 突破前的價值區上緣
+
+    def test_rebound_buys_after_deep_drop_and_sells_at_trapped_supply(self):
+        decline = [452 - 2 * j for j in range(10)]  # 從約 90 元一路跌到約 75 元
+        bins = BOX * 12 + decline + [433, 434] * 5 + [441, 446, 452, 458, 461]
+        r = volume_profile.scan(*_vp_series(bins, [900] * 120 + [1500] * 25))
+        self.assertEqual([(t, side, kind) for t, side, kind, *_ in r["marks"]], [(140, "B", "reb"), (144, "S", "tgt")])
+        _, _, _, target, stop = r["marks"][0]
+        self.assertAlmostEqual(target, volume_profile.bin_price(A))  # 目標 = 價值區下緣（上方套牢區開始的地方）
+        self.assertAlmostEqual(stop, _grid(433) * 0.97)
+
+    def test_events_enter_next_day_and_payload_encodes_bands(self):
+        docs, prev = [], None
+        for i, k in enumerate(BOX * 13):
+            close = _grid(k)
+            docs.append({"date": (date(2026, 1, 1) + timedelta(days=i)).isoformat(), "twse": {"quotes": {"rows": {
+                "1111": [close, close - prev if prev else 0.0, 3000, 3000 * close / 1000]}}}})
+            prev = close
+        panel = backtest.Panel(docs)
+        events, trades = volume_profile.events(panel)
+        self.assertEqual(events["vp_rng"][:2], [("1111", 106), ("1111", 116)])
+        self.assertEqual(trades[0], ("1111", "rng", 106, 114))
+        out = volume_profile.payload(panel, {"1111": 1_000_000}, {"1111"}, display=30)
+        row = dict(zip(out["columns"], out["rows"]["1111"]))
+        self.assertEqual(row["vp_set"] & volume_profile.RANGE, volume_profile.RANGE)
+        self.assertEqual(out["dates"], panel.dates[-30:])
+        chart = out["charts"]["1111"]
+        self.assertEqual(chart["b"][1][:2], [0, B])  # 價值區下緣：第 0 天起是 B 格
+        self.assertEqual(len(chart["c"]), 30)
+        self.assertTrue(all(m[0] >= 0 for m in chart["m"]))
 
 
 class StoreTests(unittest.TestCase):

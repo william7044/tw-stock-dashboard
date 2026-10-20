@@ -214,12 +214,21 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .revnote { color: var(--ink-2); font-size: 13px; margin: -6px 0 14px; }
 .charts { display: grid; grid-template-columns: 1fr; gap: 16px; }
 @media (min-width: 760px) { .charts { grid-template-columns: 1fr 1fr; } .charts .wide { grid-column: 1 / -1; } }
+.chart-card { min-width: 0; }  /* 卡片裡的表格（不換行）不能把整個格線撐寬，改在 .table-scroll 裡捲動 */
 .chart-card h4 { margin: 0 0 6px; font-size: 13.5px; font-weight: 600; }
 .chart-card .cap { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 6px; }
 .dlg-body details { margin-top: 14px; }
 .dlg-body details summary { cursor: pointer; color: var(--ink-2); }
 .dlg-body table { margin-top: 6px; }
 .links { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--ink-2); }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.legend svg { flex: none; overflow: visible; }
+.vp-note { color: var(--muted); font-size: 12px; margin: 6px 0 0; line-height: 1.6; }
+.vp-trades td, .vp-trades th { text-align: left; }
+.vp-trades td.num, .vp-trades th.num { text-align: right; }
+.vp-empty { color: var(--ink-2); font-size: 13px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
+.bt-sub { font-size: 14px; font-weight: 650; margin: 14px 0 4px; }
 
 @media (max-width: 640px) {
   h1 { font-size: 19px; }
@@ -259,7 +268,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
           <option value="0">不限</option><option value="100">≥ 100 張</option><option value="300">≥ 300 張</option>
           <option value="1000">≥ 1,000 張</option><option value="3000">≥ 3,000 張</option></select></label>
         <label>欄位 <select id="view"><option value="">跟著清單</option><option value="mix">綜合</option>
-          <option value="tech">技術面</option><option value="fund">基本面</option></select></label>
+          <option value="tech">技術面</option><option value="fund">基本面</option><option value="vp">成交量分布</option></select></label>
         <button class="btn" type="button" id="reset">重設</button>
         <span class="count" id="count" aria-live="polite"></span>
       </div>
@@ -292,6 +301,20 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
       <th scope="col" title="報酬贏過同期中位數股票的比例。隨機選股約為 50%">贏過一半股票</th>
     </tr></thead><tbody id="btBody"></tbody></table></div>
     <div class="pad">
+      <h3 class="bt-sub" id="vpTradeTitle">成交量分布：照 B 進場、S 出場</h3>
+      <p class="hint">上面的表格是 B 之後固定持有幾天；這裡是照個股圖上的 B、S 實際進出（訊號隔天收盤），每筆持有天數不同，所以和「同一段期間」的中位數股票比較。</p>
+    </div>
+    <div class="table-scroll"><table><thead><tr>
+      <th scope="col" class="stick">訊號</th>
+      <th scope="col">交易筆數</th>
+      <th scope="col">勝率</th>
+      <th scope="col">報酬中位數</th>
+      <th scope="col" title="容易被少數大漲的交易拉高">平均報酬</th>
+      <th scope="col">持有天數</th>
+      <th scope="col" title="每筆交易的報酬減掉同一段期間的中位數股票報酬，再取中位數">超額中位數</th>
+      <th scope="col" title="報酬贏過同一段期間中位數股票的比例。隨機選股約為 50%">贏過一半股票</th>
+    </tr></thead><tbody id="vpTradeBody"></tbody></table></div>
+    <div class="pad">
       <details class="bt-notes">
         <summary>計算方式與限制（看結果前請先讀）</summary>
         <ul>
@@ -305,6 +328,8 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
           <li>只有約一年的資料，而且同一天進場的股票走勢高度相關，實際的不確定性比樣本數看起來大。換一段行情，結果可能完全不同。</li>
           <li>大戶加碼、內部人申報沒有官方的歷史資料可以回補，只能從開始執行後逐週、逐日累積。</li>
           <li>技術面訊號要先累積股價：均線、相對強弱要 60 天，創 52 週新高／新低至少要半年，所以這兩個訊號只有回測期間後半段的樣本。</li>
+          <li>成交量分布的訊號要先累積 120 天的分布，而且只看 20 日平均成交值 ≥ 1 億元的股票，請和「隨機選股（成交值 ≥ 1 億）」那一列比較。每天的分布只用前 120 個交易日，不含當天以後的資料。</li>
+          <li>成交量分布用每天的均價（成交值 ÷ 成交量）近似，沒有盤中逐筆資料；同一檔持有中不會重複出現 B，所以樣本比其他訊號少。</li>
           <li>這是統計整理，不是投資建議；過去的表現不代表未來。</li>
         </ul>
       </details>
@@ -348,6 +373,12 @@ const DATA = JSON.parse(document.getElementById("payload").textContent);
 const COLS = DATA.columns;
 const ROWS = DATA.rows.map(a => Object.fromEntries(COLS.map((c, i) => [c, a[i]])));
 const BY_CODE = Object.fromEntries(ROWS.map(r => [r.code, r]));
+// 成交量分布：只有 20 日平均成交值 ≥ 1 億的股票有資料，併進同一列（其他股票這些欄位是 undefined）
+const VP = DATA.vp || { columns: [], rows: {}, charts: {}, dates: [], step: Math.log(1.01), window: 120 };
+for (const [code, values] of Object.entries(VP.rows)) {
+  const r = BY_CODE[code];
+  if (r) VP.columns.forEach((c, i) => { r[c] = values[i]; });
+}
 const MINUS = "−";
 
 // ---------- formatting ----------
@@ -586,6 +617,316 @@ function makeChart(host, cfg) {
   return chart;
 }
 
+// ---------- volume profile chart ----------
+const VP_KIND = { rng: "區間低接", reb: "跌深反彈", brk: "整理突破" };
+const VP_BUY = {
+  rng: "箱型整理中，收盤跌到價值區下緣",
+  reb: "跌深後收盤創 10 日新高，上方還有套牢區",
+  brk: "帶量站上箱頂與價值區上緣，上方套牢量少",
+};
+const VP_EXIT = { tgt: "到目標價", stop: "跌破停損價", time: "持有滿 60 個交易日", fail: "跌回價值區（突破失敗）", trail: "從最高收盤回落 10%" };
+const VP_TRADE_RULE = {
+  rng: "S：漲到價值區上緣、跌破下緣 5%，或持有滿 60 日",
+  reb: "S：漲到價值區下緣（套牢區）、跌破 20 日低點 3%，或持有滿 60 日",
+  brk: "S：跌回價值區（突破失敗），或從進場後最高收盤回落 10%",
+};
+const vpPrice = (k, edge) => Math.exp((k + edge) * VP.step);  // 格子 k 的價格：edge 0 = 下緣、0.5 = 中間、1 = 上緣
+const fmtLevel = (k, edge) => fmtPrice(Number(vpPrice(k, edge).toPrecision(4)));  // 格子邊界取 4 位有效數字（和清單一致）
+let vpClipSeq = 0;  // 每次重畫用新的 clipPath id，避免和舊圖重複
+function expandBand(flat, n) {  // [第幾天, 格子, ...] 的變動點 → 每天的格子
+  const out = new Array(n).fill(null);
+  for (let j = 0; j < flat.length; j += 2) {
+    const end = j + 2 < flat.length ? flat[j + 2] : n;
+    for (let i = flat[j]; i < end; i++) out[i] = flat[j + 1];
+  }
+  return out;
+}
+function inkOn(hex) {  // 彩色底上的字：白色或深色，取對比高的
+  const h = (hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return "#fff";
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255)
+    .map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 1.05 / (L + 0.05) >= (L + 0.05) / 0.0556 ? "#fff" : "#111";
+}
+
+/**
+ * 成交量分布圖。cfg: { dates, close, poc, val, vah（每天的格子編號或 null）, hist: [最低格子, 千分比[]], marks, name, aria }
+ * 左：還原收盤價（--accent）、每天用前 120 日算的價值區（淡灰帶）與 POC（虛線）、B／S 標記。
+ * 右：最後一天用的分布（各價位成交量），價值區內較深、POC 最深。y 軸用對數刻度，每格（1%）一樣高。
+ */
+function makeProfileChart(host, cfg) {
+  const chart = { host, cfg, index: null };
+  host.classList.add("chart");
+  host.tabIndex = 0;
+  host.setAttribute("role", "img");
+  host.setAttribute("aria-label", cfg.aria);
+  const tip = el("div", { class: "tip", hidden: true });
+  const markAt = new Map(cfg.marks.map(m => [m[0], m]));
+
+  chart.draw = function () {
+    const css = getComputedStyle(document.documentElement);
+    const color = (name) => css.getPropertyValue(name).trim();
+    const { dates, close, poc, val, vah } = cfg;
+    const [k0, shares] = cfg.hist || [0, []];
+    host.replaceChildren();
+    const n = close.length;
+    const W = Math.max(280, host.clientWidth || 600);
+    const H = cfg.height || (W < 520 ? 250 : 300);
+    const histW = Math.round(Math.max(56, Math.min(150, W * 0.2)));
+    const padL = 46, padT = 12, padB = 22, gap = 12;
+    const plotR = W - histW - gap, histL = plotR + gap;
+    const plotW = plotR - padL, plotH = H - padT - padB;
+    const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H, "aria-hidden": "true" });
+    host.append(svg, tip);
+
+    // y 軸範圍只看收盤價與目前的分布；較早的價值區若超出範圍就裁掉（數字在提示框裡），價格線才不會被壓扁
+    const ys = close.filter(isNum);
+    shares.forEach((v, j) => { if (v > 0) ys.push(vpPrice(k0 + j, 0), vpPrice(k0 + j, 1)); });
+    if (!ys.length) {
+      const t = svgEl("text", { x: W / 2, y: H / 2, "text-anchor": "middle", class: "tick" });
+      t.textContent = "尚無資料";
+      svg.append(t);
+      return;
+    }
+    const lo = Math.min(...ys) * 0.99, hi = Math.max(...ys) * 1.01;
+    const lnLo = Math.log(lo), lnHi = Math.log(hi);
+    const y = (v) => padT + (lnHi - Math.log(v)) / (lnHi - lnLo) * plotH;
+    const priceAt = (py) => Math.exp(lnHi - (py - padT) / plotH * (lnHi - lnLo));
+    const band = plotW / n;
+    const x = (i) => padL + band * (i + 0.5);
+
+    const step = niceStep(hi - lo, H < 280 ? 4 : 5);
+    for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) {
+      const v = Math.round(t / step) * step;
+      svg.append(svgEl("line", { x1: padL, x2: plotR, y1: y(v), y2: y(v), stroke: color("--grid"), "stroke-width": 1, "shape-rendering": "crispEdges" }));
+      const lab = svgEl("text", { x: padL - 6, y: y(v) + 3.5, "text-anchor": "end", class: "tick" });
+      lab.textContent = compact(v);
+      svg.append(lab);
+    }
+    for (const i of [0, Math.floor((n - 1) / 2), n - 1].filter((v, k, a) => a.indexOf(v) === k)) {
+      const lab = svgEl("text", { x: i === 0 ? padL : i === n - 1 ? plotR : x(i), y: H - 5, "text-anchor": i === 0 ? "start" : i === n - 1 ? "end" : "middle", class: "tick" });
+      lab.textContent = md(dates[i]);
+      svg.append(lab);
+    }
+
+    // 價值區色帶與 POC：每天一階，連續的日子畫成同一塊（不會有接縫）
+    const runs = [];
+    for (let i = 0, start = null; i <= n; i++) {
+      const has = i < n && val[i] !== null;
+      if (has && start === null) start = i;
+      if (!has && start !== null) { runs.push([start, i - 1]); start = null; }
+    }
+    let area = "", pocPath = "";
+    for (const [a, b] of runs) {
+      let bottom = "";
+      for (let i = a; i <= b; i++) {
+        const xl = padL + band * i, xr = xl + band, yt = y(vpPrice(vah[i], 1)), yp = y(vpPrice(poc[i], 0.5));
+        area += `${i === a ? "M" : "L"}${xl},${yt}L${xr},${yt}`;
+        pocPath += `${i === a ? "M" : "L"}${xl},${yp}L${xr},${yp}`;
+      }
+      for (let i = b; i >= a; i--) {
+        const xl = padL + band * i, yb = y(vpPrice(val[i], 0));
+        bottom += `L${xl + band},${yb}L${xl},${yb}`;
+      }
+      area += bottom + "Z";
+    }
+    const clipId = `vpclip${++vpClipSeq}`;
+    const clip = svgEl("clipPath", { id: clipId });
+    clip.append(svgEl("rect", { x: padL, y: padT, width: plotW, height: plotH }));
+    svg.append(clip);
+    svg.append(svgEl("path", { d: area, fill: color("--ink"), "fill-opacity": 0.08, stroke: "none", "clip-path": `url(#${clipId})` }));
+    svg.append(svgEl("path", { d: pocPath, fill: "none", stroke: color("--ink-2"), "stroke-width": 1.5, "stroke-dasharray": "5 3", "clip-path": `url(#${clipId})` }));
+
+    let line = "", pen = false;
+    close.forEach((v, i) => {
+      if (!isNum(v)) { pen = false; return; }
+      line += `${pen ? "L" : "M"}${x(i)},${y(v)}`;
+      pen = true;
+    });
+    svg.append(svgEl("path", { d: line, fill: "none", stroke: color("--accent"), "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+
+    // 右側分布：長條從左往右長，資料端圓角；格子之間留空隙
+    const curPoc = poc[n - 1], curVal = val[n - 1], curVah = vah[n - 1];
+    const maxShare = Math.max(1, ...shares);
+    const bars = new Map();
+    shares.forEach((v, j) => {
+      if (!(v > 0)) return;
+      const k = k0 + j, yt = y(vpPrice(k, 1)), yb = y(vpPrice(k, 0));
+      const space = Math.min(2, (yb - yt) * 0.3), h = Math.max(1, yb - yt - space), top = yt + space / 2;
+      const w = Math.max(1.5, v / maxShare * histW), r = Math.min(3, h / 2, w / 2);
+      const isPoc = k === curPoc, inVA = curVal !== null && k >= curVal && k <= curVah;
+      const opacity = isPoc ? 0.9 : inVA ? 0.5 : 0.22;
+      const bar = svgEl("path", {
+        d: `M${histL},${top}H${histL + w - r}Q${histL + w},${top} ${histL + w},${top + r}V${top + h - r}Q${histL + w},${top + h} ${histL + w - r},${top + h}H${histL}Z`,
+        fill: color("--ink-2"), "fill-opacity": opacity,
+      });
+      bars.set(k, [bar, opacity]);
+      svg.append(bar);
+    });
+
+    const placed = [];  // 已畫的標記中心；B 隔天就 S 時兩個圈會疊在一起，B 往下、S 往上錯開
+    for (const m of cfg.marks) {
+      const [i, side] = m, v = close[i];
+      if (!isNum(v)) continue;
+      const fill = color(side === "B" ? "--up" : "--down");
+      const cx = x(i), cy = y(v), dir = side === "B" ? 1 : -1;
+      const clampY = (py) => Math.max(padT + 8, Math.min(padT + plotH - 8, py));
+      let my = clampY(cy + 16 * dir);
+      for (let k = 0; k < 4 && placed.some(([px, py]) => Math.abs(px - cx) < 17 && Math.abs(py - my) < 17); k++) {
+        my = clampY(my + 18 * dir);
+        if ((my === padT + 8 || my === padT + plotH - 8) && placed.some(([px, py]) => Math.abs(px - cx) < 17 && Math.abs(py - my) < 17)) {
+          my = clampY(cy - 16 * dir);  // 撞到邊了，改放另一側
+        }
+      }
+      placed.push([cx, my]);
+      svg.append(svgEl("line", { x1: cx, x2: cx, y1: cy, y2: my, stroke: fill, "stroke-width": 1.5 }));
+      svg.append(svgEl("circle", { cx, cy, r: 3, fill, stroke: color("--surface"), "stroke-width": 1.5 }));
+      svg.append(svgEl("circle", { cx, cy: my, r: 8, fill, stroke: color("--surface"), "stroke-width": 2 }));
+      const t = svgEl("text", { x: cx, y: my + 3.9, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: inkOn(fill) });
+      t.textContent = side;
+      svg.append(t);
+    }
+
+    let last = n - 1;
+    while (last >= 0 && !isNum(close[last])) last--;
+    if (last >= 0) {
+      svg.append(svgEl("circle", { cx: x(last), cy: y(close[last]), r: 4, fill: color("--accent"), stroke: color("--surface"), "stroke-width": 2 }));
+      const lab = svgEl("text", { x: x(last) - 8, y: y(close[last]) - 9, "text-anchor": "end", class: "endlabel" });
+      lab.textContent = fmtPrice(close[last]);
+      svg.append(lab);
+    }
+
+    const cross = svgEl("line", { y1: padT, y2: padT + plotH, stroke: color("--axis"), "stroke-width": 1, visibility: "hidden" });
+    const dot = svgEl("circle", { r: 4, fill: color("--accent"), stroke: color("--surface"), "stroke-width": 2, visibility: "hidden" });
+    const hit = svgEl("rect", { x: padL, y: 0, width: plotW, height: H, fill: "transparent" });
+    const hitHist = svgEl("rect", { x: histL - gap / 2, y: padT, width: histW + gap / 2, height: plotH, fill: "transparent" });
+    svg.append(cross, dot, hit, hitHist);
+    const key = (name) => el("span", { class: "key", style: `background:${color(name)}` });
+    const place = (px, py) => {
+      tip.hidden = false;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = px + 12;
+      if (left + tw > W) left = px - tw - 12;
+      tip.style.left = Math.max(0, left) + "px";
+      tip.style.top = Math.max(-th - 4, py - th - 8) + "px";
+    };
+    let lit = null;
+    const unlight = () => { if (lit) { lit[0].setAttribute("fill-opacity", lit[1]); lit = null; } };
+    const hide = () => {
+      chart.index = null; tip.hidden = true; unlight();
+      cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden");
+    };
+    const showDay = (i) => {
+      if (i === null || i < 0 || i >= n) return;
+      chart.index = i;
+      unlight();
+      const v = close[i];
+      cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+      if (isNum(v)) { dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(v)); dot.setAttribute("visibility", "visible"); }
+      else dot.setAttribute("visibility", "hidden");
+      const rows = [el("div", { class: "v" }, key("--accent"), fmtPrice(v)), el("div", { class: "k", text: `還原收盤・${dates[i] || ""}` })];
+      if (val[i] !== null) rows.push(el("div", { class: "k", text: `價值區 ${fmtLevel(val[i], 0)}～${fmtLevel(vah[i], 1)}・POC ${fmtLevel(poc[i], 0.5)}` }));
+      const m = markAt.get(i);
+      if (m && m[1] === "B") {
+        rows.push(el("div", {}, el("b", { class: "up", text: `B ${VP_KIND[m[2]]}` }), `：${VP_BUY[m[2]]}`));
+        rows.push(el("div", { class: "k", text: (isNum(m[3]) ? `目標 ${fmtPrice(m[3])}・` : "") + `停損 ${fmtPrice(m[4])}` }));
+      } else if (m) {
+        rows.push(el("div", {}, el("b", { class: "down", text: "S" }), `：${VP_EXIT[m[2]]}`));
+      }
+      tip.replaceChildren(...rows);
+      place(x(i), isNum(v) ? y(v) : padT);
+    };
+    const showBin = (py) => {
+      const k = Math.floor(Math.log(priceAt(py)) / VP.step), v = shares[k - k0];
+      cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden");
+      unlight();
+      if (!(v > 0)) { tip.hidden = true; return; }
+      lit = bars.get(k);
+      if (lit) lit[0].setAttribute("fill-opacity", 1);
+      const where = k === curPoc ? "POC，成交最多" : curVal !== null && k >= curVal && k <= curVah ? "價值區內" : "價值區外";
+      tip.replaceChildren(
+        el("div", { class: "v" }, key("--ink-2"), `${fmtNum(v / 10, 1)}%`),
+        el("div", { class: "k", text: `${fmtLevel(k, 0)}～${fmtLevel(k, 1)}・${where}` }),
+        el("div", { class: "k", text: `佔前 ${VP.window} 日成交量` }),
+      );
+      place(histL, py);
+    };
+    const local = (evt) => {
+      const r = svg.getBoundingClientRect();
+      return [(evt.clientX - r.left) * (W / r.width), (evt.clientY - r.top) * (H / r.height)];
+    };
+    hit.addEventListener("pointermove", (e) => { const [px] = local(e); showDay(Math.max(0, Math.min(n - 1, Math.floor((px - padL) / band)))); });
+    hitHist.addEventListener("pointermove", (e) => showBin(local(e)[1]));
+    hit.addEventListener("pointerleave", hide);
+    hitHist.addEventListener("pointerleave", hide);
+    host.onfocus = () => showDay(chart.index ?? n - 1);
+    host.onblur = hide;
+    host.onkeydown = (e) => {
+      const keys = { ArrowLeft: -1, ArrowRight: 1 };
+      if (e.key in keys) { e.preventDefault(); showDay(Math.max(0, Math.min(n - 1, (chart.index ?? n - 1) + keys[e.key]))); }
+      else if (e.key === "Home") { e.preventDefault(); showDay(0); }
+      else if (e.key === "End") { e.preventDefault(); showDay(n - 1); }
+      else if (e.key === "Escape") hide();
+    };
+  };
+  CHARTS.add(chart);
+  chart.draw();
+  return chart;
+}
+
+function vpLegend() {  // 圖例的鍵和圖上的記號一樣畫法；切換深淺色時跟著圖一起重畫
+  const list = el("ul", { class: "legend" });
+  const legend = { host: list };
+  legend.draw = function () {
+    const css = getComputedStyle(document.documentElement);
+    const color = (name) => css.getPropertyValue(name).trim();
+    const key = (...parts) => {
+      const s = svgEl("svg", { width: 18, height: 14, viewBox: "0 0 18 14", "aria-hidden": "true" });
+      for (const [tag, attrs, text] of parts) {
+        const e = svgEl(tag, attrs);
+        if (text) e.textContent = text;
+        s.append(e);
+      }
+      return s;
+    };
+    const marker = (letter, name) => key(["circle", { cx: 9, cy: 7, r: 7, fill: color(name) }],
+      ["text", { x: 9, y: 10.6, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: inkOn(color(name)) }, letter]);
+    const ink2 = color("--ink-2");
+    list.replaceChildren(...[
+      [key(["line", { x1: 1, x2: 17, y1: 7, y2: 7, stroke: color("--accent"), "stroke-width": 2, "stroke-linecap": "round" }]), "還原收盤價"],
+      [key(["rect", { x: 1, y: 2, width: 16, height: 10, rx: 2, fill: color("--ink"), "fill-opacity": 0.12 }]), `價值區（前 ${VP.window} 日 70% 成交量）`],
+      [key(["line", { x1: 1, x2: 17, y1: 7, y2: 7, stroke: ink2, "stroke-width": 1.5, "stroke-dasharray": "5 3" }]), "POC（成交最多的價位）"],
+      [marker("B", "--up"), "買進訊號"],
+      [marker("S", "--down"), "賣出訊號"],
+      [key(["rect", { x: 1, y: 1, width: 15, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.9 }],
+        ["rect", { x: 1, y: 5.5, width: 10, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.5 }],
+        ["rect", { x: 1, y: 10, width: 5, height: 3, rx: 1, fill: ink2, "fill-opacity": 0.22 }]), "右側：各價位成交量（深＝POC、價值區）"],
+    ].map(([k, label]) => el("li", {}, k, label)));
+  };
+  CHARTS.add(legend);
+  legend.draw();
+  return list;
+}
+
+function vpTradeTable(trades) {
+  const tb = el("tbody");
+  for (const [bDate, bPx, sDate, sPx, ret, kind, reason, final] of [...trades].reverse()) {
+    const retText = isNum(ret) ? fmtSigned(ret, 2, "%") + (final ? "" : "（估）") : "明天收盤進場";
+    tb.append(el("tr", {},
+      el("td", { text: VP_KIND[kind] }),
+      el("td", { text: `${bDate}・${fmtPrice(bPx)}` }),
+      el("td", { text: sDate ? `${sDate}・${fmtPrice(sPx)}` : "持有中" }),
+      el("td", { text: reason ? VP_EXIT[reason] : "—" }),
+      el("td", { class: "num " + (isNum(ret) ? dirClass(ret) : "na"), text: retText }),
+    ));
+  }
+  return el("table", { class: "vp-trades" }, el("thead", {}, el("tr", {},
+    el("th", { scope: "col", text: "訊號" }), el("th", { scope: "col", text: "B（日期・還原收盤）" }),
+    el("th", { scope: "col", text: "S（日期・還原收盤）" }), el("th", { scope: "col", text: "出場原因" }),
+    el("th", { scope: "col", class: "num", text: "報酬" }))), tb);
+}
+
 // ---------- header & status ----------
 document.getElementById("subtitle").textContent =
   `資料日期 ${withWeekday(DATA.data_date)}・更新於 ${(DATA.updated_at || "").replace("T", " ").slice(0, 16) || "—"}（台灣時間）`;
@@ -711,8 +1052,13 @@ const PRESETS = [
   { id: "volup", group: "tech", view: "tech", label: "爆量上漲", desc: "今天成交量 ≥ 前 20 日均量 2 倍、成交量 ≥ 500 張且收漲；依量比排序。", f: r => ge(r.vol_ratio, 2) && ge(r.vol, 500) && isNum(r.chg_pct) && r.chg_pct > 0, sort: ["vol_ratio", -1] },
   { id: "macd", group: "tech", view: "tech", label: "MACD 黃金交叉", desc: "今天 DIF 由下往上穿過 DEA、5 日均量 ≥ 300 張；依成交量排序。", f: r => r.macd_state === 2 && ge(r.vol5, 300), sort: ["vol", -1] },
   { id: "rsilow", group: "tech", view: "tech", label: "RSI 超賣", desc: "14 日 RSI ≤ 30、5 日均量 ≥ 300 張；由低到高排序。超賣之後也可能繼續下跌。", f: r => isNum(r.rsi) && r.rsi <= 30 && ge(r.vol5, 300), sort: ["rsi", 1] },
+  // 成交量分布（只有 20 日平均成交值 ≥ 1 億的股票有資料；vp_set 是旗標：1 量大權值股、2 區間整理、4 跌深反彈、8 整理突破）
+  { id: "vpbig", group: "vp", view: "vp", label: "量大權值股", desc: "市值前 150 大、近 20 日平均成交值 ≥ 3 億元。參與的人多，不容易被少數大單扭曲，成交量分布最可靠；依成交值排序。點任一列看成交量分布圖與買賣點。", f: r => (r.vp_set & 1) > 0, sort: ["value", -1], extra: ["mcap"] },
+  { id: "vprange", group: "vp", view: "vp", label: "區間整理", desc: "近 60 日高低差 ≤ 25%、60 日漲跌在 ±10% 以內，前 120 日的價值區就在這個箱子裡，收盤也在價值區內（下緣下方 3% 以內也算）。跌到價值區下緣標 B、漲到上緣標 S；依在價值區的位置排序，越接近下緣越前面。", f: r => (r.vp_set & 2) > 0, sort: ["vp_pos", 1] },
+  { id: "vpreb", group: "vp", view: "vp", label: "跌深反彈", desc: "距 120 日高點跌超過 20%、已經從 20 日低點反彈 ≥ 5%，但 POC 與價值區都還在上方。價值區下緣（套牢區開始的地方）就是預估遇到賣壓的位置；依離套牢區的距離排序。", f: r => (r.vp_set & 4) > 0, sort: ["vp_room", -1], extra: ["vp_room"] },
+  { id: "vpbrk", group: "vp", view: "vp", label: "整理突破", desc: "最近 10 個交易日內出現「整理突破」B 且還沒出場：60 日高低差 ≤ 25% 之後，收盤帶量站上箱頂與價值區上緣，而且上方套牢量 ≤ 15%。依突破後的天數排序。", f: r => (r.vp_set & 8) > 0, sort: ["vp_b", 1], extra: ["vp_above"] },
 ];
-const PRESET_GROUPS = [["all", ""], ["chip", "籌碼"], ["fund", "基本面"], ["tech", "技術面"]];
+const PRESET_GROUPS = [["all", ""], ["chip", "籌碼"], ["fund", "基本面"], ["tech", "技術面"], ["vp", "成交量分布"]];
 const MACD_TEXT = { 2: "黃金交叉", 1: "多方", "-1": "空方", "-2": "死亡交叉" };
 const COLDEFS = {
   close: { label: "收盤", fmt: fmtPrice },
@@ -754,11 +1100,22 @@ const COLDEFS = {
   rev_high: { label: "營收新高", fmt: v => v === 1 ? "12 個月新高" : "—", dir: true, title: "最新月營收是否為近 12 個月最高" },
   rev_streak: { label: "年增連續", fmt: v => isNum(v) && v > 0 ? v + " 個月" : "—", title: "營收年增率連續為正的月數（最多看 13 個月）" },
   pe_pct: { label: "本益比位置%", fmt: v => fmtNum(v, 0), title: "目前本益比在過去一年每月本益比中的位置：0 = 最便宜、100 = 最貴" },
+  mcap: { label: "市值(億)", fmt: v => fmtNum(v), title: "收盤價 × 已發行股數（億元）" },
+  vp_poc: { label: "POC", fmt: fmtPrice, title: "前 120 個交易日成交量最多的價位（還原股價）" },
+  vp_val: { label: "價值區下緣", fmt: fmtPrice, title: "前 120 日 70% 成交量集中的價格區間的下緣，常是支撐" },
+  vp_vah: { label: "價值區上緣", fmt: fmtPrice, title: "前 120 日 70% 成交量集中的價格區間的上緣，常是壓力" },
+  vp_pos: { label: "價值區位置%", fmt: v => isNum(v) ? (v < 0 ? MINUS : "") + fmtNum(Math.abs(v), 0) : "—", title: "收盤在價值區的位置：0 = 下緣、100 = 上緣；小於 0 或大於 100 表示在價值區外" },
+  vp_room: { label: "距套牢區%", fmt: v => fmtSigned(v, 1), title: "收盤漲到價值區下緣（套牢區開始的地方）還差多少" },
+  vp_above: { label: "上方套牢量%", fmt: v => fmtNum(v, 0), title: "前 120 日的成交量中，價格高於今天收盤的比例" },
+  vp_b: { label: "持有中訊號", fmt: (v, r) => isNum(v) ? `${VP_KIND[r.vp_kind]} B・${v === 0 ? "今天" : v + " 天前"}` : "—", title: "還沒出現 S 的 B 訊號：種類與距今幾個交易日" },
+  vp_tgt: { label: "目標價", fmt: fmtPrice, title: "區間低接＝價值區上緣；跌深反彈＝價值區下緣（套牢區）；整理突破不設目標" },
+  vp_stop: { label: "出場價", fmt: fmtPrice, title: "收盤跌破這個價格就會標 S（停損、突破失敗或移動停利）" },
 };
 const VIEWS = {
   mix: ["close", "chg_pct", "ret5", "vol", "f1", "f5", "fs", "t1", "t5", "ts", "m_chg", "rev_yoy", "pe", "yld", "big", "big_chg"],
   tech: ["close", "chg_pct", "ret5", "ret20", "ret60", "vol", "vol_ratio", "align", "pos52", "dist_hi", "rs", "rsi", "macd_state"],
   fund: ["close", "chg_pct", "rev", "rev_yoy", "rev_mom", "rev_cum_yoy", "rev_high", "rev_streak", "pe", "pe_pct", "yld", "pb"],
+  vp: ["close", "chg_pct", "ret20", "value", "vp_poc", "vp_val", "vp_vah", "vp_pos", "vp_b", "vp_tgt", "vp_stop"],
 };
 
 // selected：已選的快速篩選（依點選順序，第一個決定預設排序）；mode：and = 同時符合、or = 符合任一
@@ -910,7 +1267,7 @@ function renderTable() {
     for (const k of cols) {
       const def = COLDEFS[k], v = r[k];
       const cls = [isNum(v) ? (def.dir ? dirClass(v) : "") : "na", k === sk ? "sorted" : ""].filter(Boolean).join(" ");
-      tr.append(el("td", { class: cls || null, text: def.fmt(v) }));
+      tr.append(el("td", { class: cls || null, text: def.fmt(v, r) }));
     }
     frag.append(tr);
   }
@@ -975,6 +1332,30 @@ function renderAll() { renderPresets(); renderTable(); }
   draw();
 })();
 
+(function renderVpTrades() {
+  const bt = DATA.backtest || {}, stats = bt.vp_trades;
+  const body = document.getElementById("vpTradeBody");
+  if (!stats) { body.append(el("tr", {}, el("td", { colspan: 8, class: "empty", text: (bt && bt.message) || "尚無回測結果。" }))); return; }
+  for (const kind of Object.keys(VP_KIND)) {
+    const st = stats[kind] || { n: 0 };
+    const name = el("td", { class: "stick bt-name" }, el("div", { class: "bt-label", text: VP_KIND[kind] }), el("div", { class: "bt-rule", text: VP_TRADE_RULE[kind] }));
+    if (!isNum(st.win)) {
+      body.append(el("tr", {}, name, el("td", { colspan: 7, class: "na bt-na", text: `樣本不足（${st.n} 筆，至少要 ${bt.min_samples} 筆）` })));
+      continue;
+    }
+    body.append(el("tr", {},
+      name,
+      el("td", { text: fmtNum(st.n) }),
+      el("td", { text: fmtNum(st.win, 0) + "%" }),
+      el("td", { class: dirClass(st.median), text: fmtSigned(st.median, 2, "%") }),
+      el("td", { class: dirClass(st.mean), text: fmtSigned(st.mean, 2, "%") }),
+      el("td", { text: fmtNum(st.days, 0) + " 天" }),
+      el("td", { class: dirClass(st.excess_median), text: fmtSigned(st.excess_median, 2, "%") }),
+      el("td", { text: fmtNum(st.beat, 0) + "%" }),
+    ));
+  }
+})();
+
 // ---------- insider declarations ----------
 (function renderInsider() {
   const body = document.getElementById("insBody");
@@ -1022,6 +1403,16 @@ function openDetail(code) {
   add("相對強弱（60 日）", isNum(r.rs) ? `贏過 ${fmtNum(r.rs, 0)}% 的股票` : "—");
   add("RSI（14 日）", fmtNum(r.rsi, 1));
   add("MACD（DIF／DEA）", isNum(r.dif) ? `${COLDEFS.macd_state.fmt(r.macd_state)}（${fmtNum(r.dif, 2)}／${fmtNum(r.dea, 2)}）` : "—", dirClass(r.macd_state));
+  if (isNum(r.vp_poc)) {
+    section(`成交量分布（前 ${VP.window} 個交易日，還原股價）`);
+    add("POC（成交最多的價位）", fmtPrice(r.vp_poc));
+    add("價值區（70% 成交量）", `${fmtPrice(r.vp_val)}～${fmtPrice(r.vp_vah)}`);
+    add("收盤在價值區的位置", isNum(r.vp_pos) ? `${COLDEFS.vp_pos.fmt(r.vp_pos)}%（0 = 下緣、100 = 上緣）` : "—");
+    add("上方套牢量", isNum(r.vp_above) ? `${fmtNum(r.vp_above, 0)}%` : "—");
+    add("持有中訊號", COLDEFS.vp_b.fmt(r.vp_b, r), isNum(r.vp_b) ? "up" : null);
+    add("目標價／出場價", isNum(r.vp_b) ? `${fmtPrice(r.vp_tgt)}／${fmtPrice(r.vp_stop)}` : "—");
+    add("符合的清單", PRESETS.filter(p => p.group === "vp" && p.f(r)).map(p => p.label).join("、") || "—");
+  }
   section("法人與融資");
   add("外資 今日／5 日", `${fmtSigned(r.f1)}／${fmtSigned(r.f5)} 張`, dirClass(r.f5));
   add("外資 20 日／連續", `${fmtSigned(r.f20)} 張／${fmtStreak(r.fs)}`);
@@ -1057,8 +1448,16 @@ function openDetail(code) {
     return host;
   };
   const hPrice = card("收盤價", `近 ${S.dates.length} 個交易日`, true);
+  const vpc = VP.charts[code];
+  const hVP = vpc && vpc.h ? card("成交量分布與買賣點", `近 ${VP.dates.length} 個交易日・還原股價`, true) : null;
   const hF = card("外資買賣超", "張／日，紅＝買超、綠＝賣超");
   const hT = card("投信買賣超", "張／日，紅＝買超、綠＝賣超");
+  if (!hVP) {
+    const why = r.vp_set === undefined
+      ? "成交量分布：近 20 日平均成交值未達 1 億元。量太小時，少數幾筆大單就能堆出假的高量區，所以不分析。"
+      : `成交量分布：有成交的日子還不到 ${VP.window} 天，分布還沒成形。`;
+    body.append(el("p", { class: "vp-empty", text: why }));
+  }
   body.append(charts);
 
   const tbl = el("table", {}, el("thead", {}, el("tr", {},
@@ -1088,6 +1487,28 @@ function openDetail(code) {
   if (!dlg.open) dlg.showModal();
   dlg.scrollTop = 0;
   makeChart(hPrice, { kind: "line", height: 170, dates: S.dates, values: S.close[code], fmt: fmtPrice, name: "收盤價", aria: `${r.name}近 ${S.dates.length} 日收盤價` });
+  if (hVP) {
+    const n = vpc.c.length;
+    const nB = vpc.m.filter(m => m[1] === "B").length, nS = vpc.m.length - nB;
+    makeProfileChart(hVP, {
+      dates: VP.dates, close: vpc.c, poc: expandBand(vpc.b[0], n), val: expandBand(vpc.b[1], n), vah: expandBand(vpc.b[2], n),
+      hist: vpc.h, marks: vpc.m,
+      aria: `${r.name}近 ${n} 日還原收盤價、價值區與成交量分布，標有 ${nB} 個 B、${nS} 個 S；完整買賣點列在下方表格`,
+    });
+    const cardEl = hVP.parentElement;
+    cardEl.append(vpLegend());
+    cardEl.append(el("p", { class: "vp-note", text:
+      `每天的價值區、POC 都只用前 ${VP.window} 個交易日的成交量計算，B／S 是依固定規則自動標註，不會用到當天以後的資料；` +
+      "每天的量放在當天均價（成交值 ÷ 成交量），沒有盤中逐筆資料。這是統計整理，不是投資建議。" }));
+    if (vpc.tr.length) {
+      cardEl.append(el("details", { open: true },
+        el("summary", { text: `這段期間的買賣點（${vpc.tr.length} 筆）` }),
+        el("div", { class: "table-scroll" }, vpTradeTable(vpc.tr)),
+        el("p", { class: "vp-note", text: "報酬以訊號隔天收盤進出計算（含配息），不含手續費與交易稅；「估」＝還沒出場或明天才出場，先用最新收盤估算。" })));
+    } else {
+      cardEl.append(el("p", { class: "vp-note", text: "這段期間沒有出現 B／S 訊號。" }));
+    }
+  }
   makeChart(hF, { kind: "bar", height: 130, dates: S.insti_dates, values: S.foreign[code], fmt: v => fmtSigned(v) + " 張", name: "外資", aria: `${r.name}外資每日買賣超` });
   makeChart(hT, { kind: "bar", height: 130, dates: S.insti_dates, values: S.trust[code], fmt: v => fmtSigned(v) + " 張", name: "投信", aria: `${r.name}投信每日買賣超` });
 }

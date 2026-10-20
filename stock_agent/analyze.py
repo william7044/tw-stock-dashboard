@@ -1,10 +1,11 @@
 """把 data/ 裡的原始資料算成儀表板要用的指標。
 
-每檔股票一列（欄位見 COLUMNS），另外附上個股走勢序列、大盤序列與內部人申報清單。
+每檔股票一列（欄位見 COLUMNS），另外附上個股走勢序列、大盤序列、內部人申報清單與成交量分布（vp）。
 """
 from datetime import date, timedelta
 
 from . import indicators as ind
+from . import volume_profile
 from .backtest import Panel, load_exrights
 from .store import Store
 
@@ -245,7 +246,11 @@ def build_payload(store=None, all_docs=None):
         n, lots_sum = ins_by_code.get(rec["code"], (0, 0))
         ins_by_code[rec["code"]] = (n + 1, lots_sum + (rec["lots"] or 0))
 
-    tech, breadth = technicals(Panel(all_docs[-LONG_WINDOW:], load_exrights(store)), set(market_of))
+    exrights = load_exrights(store)
+    tech, breadth = technicals(Panel(all_docs[-LONG_WINDOW:], exrights), set(market_of))
+    # 成交量分布用全部載入的日子（和回測同一段），買賣點才會和回測的訊號一致
+    shares = {code: info.get("shares") for code, info in companies.items()}
+    vp = volume_profile.payload(Panel(all_docs, exrights), shares, set(market_of))
     rev_extra = revenue_metrics(store)
     pe_pct = pe_position(store, valuation)
 
@@ -363,4 +368,5 @@ def build_payload(store=None, all_docs=None):
         },
         "rev_notes": rev_notes,
         "insider": insider[:300],
+        "vp": vp,
     }
