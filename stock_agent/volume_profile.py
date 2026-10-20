@@ -322,12 +322,11 @@ def payload(panel, shares, universe, display=DISPLAY):
                 marks.append([t - d0, "B", kind, _px(target), _px(stop_)])
             else:
                 marks.append([t - d0, "S", kind])
-        # 交易：訊號隔天收盤進出（含配息）；S 在最後一天、或還沒出場的，先用最新收盤估算（final = 0）
-        trades = []
-        for kind, b, x, reason in r["trades"]:
-            if x >= d0:
-                trades.append([panel.dates[b], _px(px[b]), panel.dates[x], _px(px[x]),
-                               _ret(idx, b + 1, min(x + 1, T - 1)), kind, reason, int(x + 1 < T)])
+        # 全部交易（含圖表範圍以前的，個股頁的合計才會和回測一致）：訊號隔天收盤進出（含配息）；
+        # S 在最後一天、或還沒出場的，先用最新收盤估算（final = 0，不算進合計）
+        trades = [[panel.dates[b], _px(px[b]), panel.dates[x], _px(px[x]),
+                   _ret(idx, b + 1, min(x + 1, T - 1)), kind, reason, int(x + 1 < T)]
+                  for kind, b, x, reason in r["trades"]]
         if pos is not None:
             b = pos["t"]
             trades.append([panel.dates[b], _px(px[b]), None, None, _ret(idx, b + 1, T - 1) if b + 1 < T else None,

@@ -227,6 +227,11 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
 .vp-note { color: var(--muted); font-size: 12px; margin: 6px 0 0; line-height: 1.6; }
 .vp-trades td, .vp-trades th { text-align: left; }
 .vp-trades td.num, .vp-trades th.num { text-align: right; }
+.vp-trades tfoot th, .vp-trades tfoot td { position: static; background: var(--surface-2); color: var(--ink); font-weight: 650; font-size: 13px; white-space: normal; border-top: 1px solid var(--axis); border-bottom: 0; }
+.vp-trades tfoot td.up { color: var(--up-text); }
+.vp-trades tfoot td.down { color: var(--down-text); }
+.vp-trades tfoot .vp-sub { font-weight: 400; font-size: 12px; color: var(--ink-2); }
+.vp-trades tfoot .vp-total { max-width: calc(100vw - 64px); }  /* 表格比畫面寬時（要左右捲），合計文字仍在看得到的範圍內換行 */
 .vp-empty { color: var(--ink-2); font-size: 13px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
 .bt-sub { font-size: 14px; font-weight: 650; margin: 14px 0 4px; }
 
@@ -909,6 +914,8 @@ function vpLegend() {  // 圖例的鍵和圖上的記號一樣畫法；切換深
   return list;
 }
 
+const TRADE_COST = 0.585;  // 每次買進＋賣出的成本（%）：手續費 0.1425% × 2（未打折）＋證交稅 0.3%
+
 function vpTradeTable(trades) {
   const tb = el("tbody");
   for (const [bDate, bPx, sDate, sPx, ret, kind, reason, final] of [...trades].reverse()) {
@@ -921,10 +928,20 @@ function vpTradeTable(trades) {
       el("td", { class: "num " + (isNum(ret) ? dirClass(ret) : "na"), text: retText }),
     ));
   }
+  // 合計：只算已完成的交易（隔天收盤已經賣出）；每次進場金額相同，所以各筆報酬直接相加
+  const done = trades.filter(t => t[7] && isNum(t[4]));
+  const sum = done.reduce((s, t) => s + t[4], 0), net = sum - TRADE_COST * done.length;
+  const foot = done.length
+    ? el("tr", {},
+        el("th", { scope: "row", colspan: 4 }, el("div", { class: "vp-total" },
+          el("div", { text: `合計：已完成 ${done.length} 筆（${done.filter(t => t[4] > 0).length} 筆賺）` }),
+          el("div", { class: "vp-sub", text: `每筆投入 10 萬元共 ${fmtSigned(sum * 1000)} 元；扣手續費與證交稅後 ${fmtSigned(net * 1000)} 元（${fmtSigned(net, 2, "%")}）` }))),
+        el("td", { class: "num " + dirClass(sum), text: fmtSigned(sum, 2, "%") }))
+    : el("tr", {}, el("th", { scope: "row", colspan: 5, text: "合計：還沒有完整買進賣出的交易（持有中、明天才賣出的不算）" }));
   return el("table", { class: "vp-trades" }, el("thead", {}, el("tr", {},
     el("th", { scope: "col", text: "訊號" }), el("th", { scope: "col", text: "B（日期・還原收盤）" }),
     el("th", { scope: "col", text: "S（日期・還原收盤）" }), el("th", { scope: "col", text: "出場原因" }),
-    el("th", { scope: "col", class: "num", text: "報酬" }))), tb);
+    el("th", { scope: "col", class: "num", text: "報酬" }))), tb, el("tfoot", {}, foot));
 }
 
 // ---------- header & status ----------
@@ -1502,11 +1519,12 @@ function openDetail(code) {
       "每天的量放在當天均價（成交值 ÷ 成交量），沒有盤中逐筆資料。這是統計整理，不是投資建議。" }));
     if (vpc.tr.length) {
       cardEl.append(el("details", { open: true },
-        el("summary", { text: `這段期間的買賣點（${vpc.tr.length} 筆）` }),
+        el("summary", { text: `全部買賣紀錄（${vpc.tr.length} 筆，含圖表範圍以前的）` }),
         el("div", { class: "table-scroll" }, vpTradeTable(vpc.tr)),
-        el("p", { class: "vp-note", text: "報酬以訊號隔天收盤進出計算（含配息），不含手續費與交易稅；「估」＝還沒出場或明天才出場，先用最新收盤估算。" })));
+        el("p", { class: "vp-note", text: "報酬以訊號隔天收盤進出計算（含配息），不含手續費與交易稅；「估」＝還沒出場或明天才出場，先用最新收盤估算，不算進合計。" +
+          `合計假設每次進場的金額都一樣，所以各筆報酬直接相加；扣成本是每次買賣來回扣 ${TRADE_COST}%（手續費 0.1425% × 2 未打折＋證交稅 0.3%）。` })));
     } else {
-      cardEl.append(el("p", { class: "vp-note", text: "這段期間沒有出現 B／S 訊號。" }));
+      cardEl.append(el("p", { class: "vp-note", text: "還沒有出現過 B／S 訊號。" }));
     }
   }
   makeChart(hF, { kind: "bar", height: 130, dates: S.insti_dates, values: S.foreign[code], fmt: v => fmtSigned(v) + " 張", name: "外資", aria: `${r.name}外資每日買賣超` });

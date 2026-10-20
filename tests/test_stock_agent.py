@@ -457,6 +457,9 @@ class VolumeProfileTests(unittest.TestCase):
         self.assertEqual(chart["b"][1][:2], [0, B])  # 價值區下緣：第 0 天起是 B 格
         self.assertEqual(len(chart["c"]), 30)
         self.assertTrue(all(m[0] >= 0 for m in chart["m"]))
+        # 圖只畫最後 10 天，但交易明細要包含更早的交易，個股頁的合計才會和回測一致
+        early = volume_profile.payload(panel, {"1111": 1_000_000}, {"1111"}, display=10)["charts"]["1111"]["tr"]
+        self.assertEqual((early[0][0], early[0][2], early[0][7]), (panel.dates[105], panel.dates[113], 1))
 
 
 class StoreTests(unittest.TestCase):
