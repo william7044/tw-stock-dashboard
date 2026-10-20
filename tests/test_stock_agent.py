@@ -414,6 +414,13 @@ class VolumeProfileTests(unittest.TestCase):
         self.assertAlmostEqual(stop, volume_profile.bin_price(B) * 0.95)
         self.assertEqual(r["flags"] & volume_profile.RANGE, volume_profile.RANGE)
 
+    def test_range_buys_when_box_condition_starts_while_already_at_the_low(self):
+        # 第 128 天起一直收在 B 格（價值區下緣），但成交值到第 130 天才達 1 億：
+        # 「箱型整理」和「在下緣」第一次同時成立是第 130 天，那天就買，不用等股價離開再跌回來
+        bins = BOX * 12 + BOX[:8] + [B] * 8
+        r = volume_profile.scan(*_vp_series(bins, [900] * 130 + [4000] * 6))
+        self.assertEqual([(t, side, kind) for t, side, kind, *_ in r["marks"]], [(130, "B", "rng")])
+
     def test_breakout_buys_on_volume_and_sells_when_back_in_value_area(self):
         bins = BOX * 15 + [470, 471, 472, 469, C]  # 第 150 天帶量跳到箱子上方，第 154 天跌回價值區
         vols = [900] * 150 + [5000, 900, 900, 900, 900]  # 整理期間成交值不到 1 億，不會出現區間訊號
