@@ -11,8 +11,8 @@
 只分析 20 日平均成交值 ≥ 1 億元的股票：量太小時，少數幾筆大單就能堆出假的高量區。
 
 買賣點（每檔同時最多一筆部位；B 之後要等到 S，才會出現下一個 B）：
-- 區間低接：60 日箱型整理中（價值區也在箱子裡），而且收盤在價值區下緣 1% 以內，
-  兩者第一次同時成立的那天 → B；
+- 區間低接：60 日箱型整理中（價值區也在箱子裡），收盤從上方跌到價值區下緣 → B
+  （股價早已待在下緣的不算，要先離開再跌回來）；
   漲到價值區上緣 → S（到目標），跌破下緣 5% → S（停損），持有滿 60 日 → S（到期）。
 - 跌深反彈：距 120 日高點跌超過 20%、POC 與價值區都在上方（套牢區），收盤創 10 日新高、
   離 20 日低點 ≥ 5% → B；漲到價值區下緣（套牢區開始的地方）→ S（到目標），
@@ -181,7 +181,7 @@ def scan(close, vol, value, idx):
     hi10, _ = ind.prior_extremes(px, 10, min_days=10)
     vol20 = _mean(vol, 20, today=False)
 
-    marks, trades, pos, zone_prev, flags = [], [], None, False, 0
+    marks, trades, pos, near_prev, flags = [], [], None, False, 0
     for t in range(T):
         c, lv = px[t], levels[t]
         if isnan(c):
@@ -204,7 +204,6 @@ def scan(close, vol, value, idx):
                         and val * (1 - RANGE_SLACK) <= c <= vah)
             rebounding = (liquid and low <= top * (1 - DEEP) and poc >= c * POC_ROOM and val >= c * VAL_ROOM
                           and c >= low * (1 + BOUNCE))
-        zone = in_range and near  # 區間低接的買進區：箱型整理中，而且收盤在價值區下緣附近
         if pos is not None:  # 持有中只看出場；出場當天也不會再進場
             reason = _exit(pos, c, t)
             if reason:
@@ -217,13 +216,13 @@ def scan(close, vol, value, idx):
                 pos = {"kind": "brk", "t": t, "target": None, "stop": vah, "peak": c}
             elif rebounding and c > hi10[t]:
                 pos = {"kind": "reb", "t": t, "target": val, "stop": low * REB_STOP}
-            # 兩個條件第一次同時成立那天就買（股價先到下緣、整理條件後來才成立也算）；
-            # 之後一直待在買進區不重複進場，要先離開再回來
-            elif zone and not zone_prev:
+            # 只在收盤「從上方剛跌到下緣」那天買。股價早已待在下緣、整理條件後來才成立，
+            # 或停損後又回到下緣，都不算買點（試過把這兩種也當 B，回測明顯較差）
+            elif in_range and near and not near_prev:
                 pos = {"kind": "rng", "t": t, "target": vah, "stop": val * RANGE_STOP}
             if pos is not None:
                 marks.append((t, "B", pos["kind"], pos["target"], pos["stop"]))
-        zone_prev = zone
+        near_prev = near
         if t == T - 1:
             flags = RANGE * in_range | REBOUND * rebounding
     if pos is not None and pos["kind"] == "brk" and pos["t"] >= T - RECENT:

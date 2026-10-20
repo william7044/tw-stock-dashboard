@@ -52,7 +52,7 @@ SIGNALS = [
     {"id": "volup", "group": "技術面", "label": "爆量上漲", "rule": "成交量 ≥ 前 20 日均量 2 倍、≥ 500 張且收漲", "timing": NEXT_DAY},
     {"id": "macd", "group": "技術面", "label": "MACD 黃金交叉", "rule": "DIF 由下往上穿過 DEA、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
     {"id": "rsilow", "group": "技術面", "label": "RSI 超賣", "rule": "14 日 RSI ≤ 30、5 日均量 ≥ 300 張", "timing": NEXT_DAY},
-    {"id": "vp_rng", "group": "成交量分布", "label": "區間低接（B）", "rule": "60 日高低差 ≤ 25%、60 日漲跌在 ±10% 內，前 120 日價值區落在這個箱子裡，收盤在價值區下緣 1% 以內（兩者第一次同時成立那天）", "timing": VP_TIMING},
+    {"id": "vp_rng", "group": "成交量分布", "label": "區間低接（B）", "rule": "60 日高低差 ≤ 25%、60 日漲跌在 ±10% 內，前 120 日價值區落在這個箱子裡，收盤從上方跌到價值區下緣", "timing": VP_TIMING},
     {"id": "vp_reb", "group": "成交量分布", "label": "跌深反彈（B）", "rule": "距 120 日高點跌 ≥ 20%、POC 與價值區都在上方，收盤創 10 日新高且離 20 日低點 ≥ 5%", "timing": VP_TIMING},
     {"id": "vp_brk", "group": "成交量分布", "label": "整理突破（B）", "rule": "60 日高低差 ≤ 25%，收盤帶量（≥ 前 20 日均量 1.5 倍）站上箱頂與價值區上緣、上方套牢量 ≤ 15%", "timing": VP_TIMING},
 ]
